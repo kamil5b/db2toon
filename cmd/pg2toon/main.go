@@ -4,90 +4,109 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/kamil5b/pgschema2toon/internal/database"
+	"github.com/kamil5b/pgschema2toon/internal/database/postgres"
 	"github.com/kamil5b/pgschema2toon/pkg/toon"
 )
 
-const extractQuery = `
-SELECT jsonb_strip_nulls(jsonb_agg(table_info))
-FROM (
-    SELECT jsonb_strip_nulls(jsonb_build_object(
-        'table', t.relname,
-        'comment', NULLIF(obj_description(t.oid, 'pg_class'), ''),
-        'columns', (
-            SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
-                'name', a.attname,
-                'type', format_type(a.atttypid, a.atttypmod),
-                'comment', NULLIF(col_description(t.oid, a.attnum), ''),
-                'nullable', CASE WHEN a.attnotnull THEN NULL ELSE true END,
-                'is_pk', EXISTS (
-                    SELECT 1 FROM pg_index i
-                    WHERE i.indrelid = t.oid AND a.attnum = ANY(i.indkey) AND i.indisprimary
-                )
-            )))
-            FROM pg_attribute a
-            WHERE a.attrelid = t.oid AND a.attnum > 0 AND NOT a.attisdropped
-        ),
-        'constraints', (
-            SELECT NULLIF(jsonb_agg(jsonb_build_object(
-                'name', c.conname,
-                'def', pg_get_constraintdef(c.oid)
-            )), '[]'::jsonb)
-            FROM pg_constraint c
-            WHERE c.conrelid = t.oid AND c.contype = 'f'
-        ),
-        'indexes', (
-            SELECT NULLIF(jsonb_agg(jsonb_build_object(
-                'name', i.relname,
-                'def', pg_get_indexdef(i.oid)
-            )), '[]'::jsonb)
-            FROM pg_index x
-            JOIN pg_class i ON i.oid = x.indexrelid
-            WHERE x.indrelid = t.oid AND NOT x.indisprimary
-        )
-    )) AS table_info
-    FROM pg_class t
-    JOIN pg_namespace n ON n.oid = t.relnamespace
-    WHERE t.relkind = 'r' AND n.nspname = 'public'
-    ORDER BY t.relname
-) sub;`
-
 func main() {
-	dbURL := flag.String("db", "", "Postgres URL")
-	output := flag.String("out", "", "Output File")
-	flag.Parse()
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
+func run(args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("pg2toon", flag.ContinueOnError)
+	dbURL := flags.String("db", "", "Postgres URL")
+	output := flags.String("out", "", "output file (default stdout)")
+	schemaName := flags.String("schema", "", "schema to extract (default public)")
+	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
+	includePartitioned := flags.Bool("include-partitioned", false, "include partitioned tables")
+	timeout := flags.Duration("timeout", 30*time.Second, "connection and extraction timeout")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
 	if *dbURL == "" {
-		fmt.Println("Usage: pg2toon -db <url>")
-		os.Exit(1)
+		return fmt.Errorf("usage: pg2toon -db <url>")
 	}
-
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, *dbURL)
+	if *timeout <= 0 {
+		return fmt.Errorf("timeout must be greater than zero")
+	}
+	schemas, err := selectedSchemas(*schemaName, *schemaNames)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "DB Connection error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
-	defer conn.Close(ctx)
 
-	var jsonRaw []byte
-	err = conn.QueryRow(ctx, extractQuery).Scan(&jsonRaw)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+
+	extractor, err := postgres.New(ctx, *dbURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SQL Query failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("DB connection error: %w", err)
 	}
+	defer extractor.Close(context.Background())
 
-	result, err := toon.ToToon(jsonRaw)
+	db, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas: schemas, IncludePartitioned: *includePartitioned,
+	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Conversion failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("schema extraction failed: %w", err)
 	}
 
+	w := stdout
+	var file *os.File
 	if *output != "" {
-		os.WriteFile(*output, []byte(result), 0644)
-	} else {
-		fmt.Print(result)
+		file, err = os.Create(*output)
+		if err != nil {
+			return fmt.Errorf("create output: %w", err)
+		}
+		w = file
 	}
+	if err := toon.Encode(w, db); err != nil {
+		if file != nil {
+			_ = file.Close()
+		}
+		return fmt.Errorf("write output: %w", err)
+	}
+	if file != nil {
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close output: %w", err)
+		}
+	}
+	return nil
+}
+
+func splitSchemas(value string) []string {
+	var result []string
+	for _, name := range strings.Split(value, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+func selectedSchemas(schemaName, schemaNames string) ([]string, error) {
+	schemaName = strings.TrimSpace(schemaName)
+	schemas := splitSchemas(schemaNames)
+	if schemaName != "" && len(schemas) != 0 {
+		return nil, fmt.Errorf("schema and schemas flags cannot be used together")
+	}
+	if schemaName != "" {
+		return []string{schemaName}, nil
+	}
+	if len(schemas) != 0 {
+		return schemas, nil
+	}
+	return []string{"public"}, nil
 }

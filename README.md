@@ -43,10 +43,22 @@ Download pre-built binaries from the [releases page](https://github.com/kamil5b/
 ./pg2toon -db "postgresql://user:password@localhost/dbname" -out schema.toon
 ```
 
+Select multiple schemas, include partitioned tables, and change the default
+30-second operation timeout with:
+
+```bash
+./pg2toon -db "$DATABASE_URL" -schema audit
+./pg2toon -db "$DATABASE_URL" -schemas public,audit -include-partitioned -timeout 1m
+```
+
 ### Flags
 
 - `-db string`: PostgreSQL connection URL (required)
 - `-out string`: Output file path (optional, defaults to stdout)
+- `-schema string`: A single schema to extract (defaults to `public`)
+- `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`
+- `-include-partitioned`: Include PostgreSQL partitioned tables
+- `-timeout duration`: Connection and extraction timeout (defaults to `30s`)
 
 ## Output Format
 
