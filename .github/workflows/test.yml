@@ -16,7 +16,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go mod tidy
+      - run: go mod download
       - run: go test ./...
 
   postgres-integration:
@@ -27,5 +27,5 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go mod tidy
+      - run: go mod download
       - run: go test -tags=integration ./cmd/pg2toon
