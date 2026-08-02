@@ -4,6 +4,9 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -12,40 +15,20 @@ import (
 	"github.com/kamil5b/pgschema2toon/internal/database"
 	pgadapter "github.com/kamil5b/pgschema2toon/internal/database/postgres"
 	"github.com/kamil5b/pgschema2toon/pkg/schema"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 func TestPostgresSchemaToToon(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	container, err := postgres.Run(
-		ctx,
-		"postgres:16-alpine",
-		postgres.WithDatabase("schema_test"),
-		postgres.WithUsername("schema_test"),
-		postgres.WithPassword("schema_test"),
-		postgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Fatalf("start PostgreSQL container: %v", err)
-	}
+	connectionString, containerID := startPostgres(t, ctx)
 	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(container); err != nil {
-			t.Errorf("terminate PostgreSQL container: %v", err)
+		if output, err := exec.Command("docker", "rm", "-f", containerID).CombinedOutput(); err != nil {
+			t.Errorf("terminate PostgreSQL container: %v: %s", err, output)
 		}
 	})
 
-	connectionString, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("get PostgreSQL connection string: %v", err)
-	}
-
-	conn, err := pgx.Connect(ctx, connectionString)
-	if err != nil {
-		t.Fatalf("connect to PostgreSQL: %v", err)
-	}
+	conn := connectPostgres(t, ctx, connectionString)
 	t.Cleanup(func() {
 		if err := conn.Close(context.Background()); err != nil {
 			t.Errorf("close PostgreSQL connection: %v", err)
@@ -197,6 +180,58 @@ CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
 	}
 	if posts.ForeignKeys[0].LocalColumns[0] != "author_id" || posts.ForeignKeys[0].ReferencedColumns[0] != "id" {
 		t.Fatalf("foreign key columns: %#v", posts.ForeignKeys[0])
+	}
+}
+
+func startPostgres(t *testing.T, ctx context.Context) (string, string) {
+	t.Helper()
+	output, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--detach",
+		"--env", "POSTGRES_DB=schema_test",
+		"--env", "POSTGRES_USER=schema_test",
+		"--env", "POSTGRES_PASSWORD=schema_test",
+		"--publish", "127.0.0.1::5432",
+		"postgres:16-alpine",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("start PostgreSQL container: %v: %s", err, output)
+	}
+	containerID := strings.TrimSpace(string(output))
+
+	output, err = exec.CommandContext(ctx, "docker", "port", containerID, "5432/tcp").CombinedOutput()
+	if err != nil {
+		_ = exec.Command("docker", "rm", "-f", containerID).Run()
+		t.Fatalf("get PostgreSQL container port: %v: %s", err, output)
+	}
+	address := strings.TrimSpace(string(output))
+	separator := strings.LastIndexByte(address, ':')
+	if separator < 0 {
+		_ = exec.Command("docker", "rm", "-f", containerID).Run()
+		t.Fatalf("unexpected PostgreSQL container port %q", address)
+	}
+	port, err := strconv.Atoi(address[separator+1:])
+	if err != nil {
+		_ = exec.Command("docker", "rm", "-f", containerID).Run()
+		t.Fatalf("parse PostgreSQL container port %q: %v", address, err)
+	}
+	return fmt.Sprintf("postgres://schema_test:schema_test@127.0.0.1:%d/schema_test?sslmode=disable", port), containerID
+}
+
+func connectPostgres(t *testing.T, ctx context.Context, connectionString string) *pgx.Conn {
+	t.Helper()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		conn, err := pgx.Connect(ctx, connectionString)
+		if err == nil {
+			return conn
+		}
+		lastErr = err
+		select {
+		case <-ctx.Done():
+			t.Fatalf("connect to PostgreSQL: %v (last connection error: %v)", ctx.Err(), lastErr)
+		case <-ticker.C:
+		}
 	}
 }
 
