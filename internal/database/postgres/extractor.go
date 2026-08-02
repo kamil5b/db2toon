@@ -116,8 +116,8 @@ SELECT a.attname,
        NOT a.attnotnull,
        COALESCE(pg_get_expr(ad.adbin, ad.adrelid), ''),
        COALESCE(col_description(a.attrelid, a.attnum), ''),
-       a.attidentity,
-       a.attgenerated
+       a.attidentity::text,
+       a.attgenerated::text
 FROM pg_attribute a
 JOIN pg_class c ON c.oid = a.attrelid
 JOIN pg_namespace n ON n.oid = c.relnamespace
