@@ -7,9 +7,9 @@ import (
 )
 
 type ExtractOptions struct {
-	Schemas          []string
-	IncludeViews     bool
-	IncludeSystem    bool
+	Schemas            []string
+	IncludeViews       bool
+	IncludeSystem      bool
 	IncludePartitioned bool
 }
 

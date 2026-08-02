@@ -18,6 +18,7 @@ type Table struct {
 	ForeignKeys []ForeignKey
 	Uniques     []UniqueConstraint
 	Checks      []CheckConstraint
+	Exclusions  []ExclusionConstraint
 	Indexes     []Index
 }
 
@@ -56,9 +57,20 @@ type CheckConstraint struct {
 	Expression string
 }
 
+// ExclusionConstraint is a database constraint that prevents rows whose
+// indexed expressions compare equal according to the named operators.
+type ExclusionConstraint struct {
+	Name       string
+	Definition string
+}
+
 type Index struct {
 	Name             string
 	Definition       string
 	Unique           bool
 	ConstraintBacked bool
+	Method           string
+	Keys             []string
+	IncludedColumns  []string
+	Predicate        string
 }

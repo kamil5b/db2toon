@@ -51,14 +51,24 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 	}
 	defer rows.Close()
 
-	bySchema := make(map[string]*schema.Schema, len(schemas))
-	order := make([]string, 0, len(schemas))
+	var tables []schema.Table
 	for rows.Next() {
 		var table schema.Table
 		if err := rows.Scan(&table.Schema, &table.Name, &table.Comment); err != nil {
 			return nil, fmt.Errorf("scan table: %w", err)
 		}
-		if err := e.populateTable(ctx, &table); err != nil {
+		tables = append(tables, table)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate tables: %w", err)
+	}
+	rows.Close()
+
+	bySchema := make(map[string]*schema.Schema, len(schemas))
+	order := make([]string, 0, len(schemas))
+	for i := range tables {
+		table := &tables[i]
+		if err := e.populateTable(ctx, table); err != nil {
 			return nil, err
 		}
 		s, ok := bySchema[table.Schema]
@@ -67,10 +77,7 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 			bySchema[table.Schema] = s
 			order = append(order, table.Schema)
 		}
-		s.Tables = append(s.Tables, table)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate tables: %w", err)
+		s.Tables = append(s.Tables, *table)
 	}
 
 	db := &schema.Database{}
@@ -94,6 +101,9 @@ func (e *Extractor) populateTable(ctx context.Context, table *schema.Table) erro
 		return err
 	}
 	if err := e.loadChecks(ctx, table); err != nil {
+		return err
+	}
+	if err := e.loadExclusions(ctx, table); err != nil {
 		return err
 	}
 	return e.loadIndexes(ctx, table)
@@ -234,16 +244,48 @@ ORDER BY con.conname`, table.Schema, table.Name)
 	return rows.Err()
 }
 
+func (e *Extractor) loadExclusions(ctx context.Context, table *schema.Table) error {
+	rows, err := e.conn.Query(ctx, `
+SELECT con.conname, pg_get_constraintdef(con.oid)
+FROM pg_constraint con
+JOIN pg_class c ON c.oid = con.conrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relname = $2 AND con.contype = 'x'
+ORDER BY con.conname`, table.Schema, table.Name)
+	if err != nil {
+		return fmt.Errorf("query exclusion constraints for %s.%s: %w", table.Schema, table.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var exclusion schema.ExclusionConstraint
+		if err := rows.Scan(&exclusion.Name, &exclusion.Definition); err != nil {
+			return fmt.Errorf("scan exclusion constraint for %s.%s: %w", table.Schema, table.Name, err)
+		}
+		table.Exclusions = append(table.Exclusions, exclusion)
+	}
+	return rows.Err()
+}
+
 func (e *Extractor) loadIndexes(ctx context.Context, table *schema.Table) error {
 	rows, err := e.conn.Query(ctx, `
 SELECT idx.relname,
        pg_get_indexdef(idx.oid),
        i.indisunique,
-       EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
+       EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid),
+       am.amname,
+       ARRAY(SELECT pg_get_indexdef(i.indexrelid, key_position, true)
+             FROM generate_series(1, i.indnkeyatts) AS key_position),
+       ARRAY(SELECT a.attname
+             FROM unnest(i.indkey) WITH ORDINALITY AS key(attnum, position)
+             JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = key.attnum
+             WHERE key.position > i.indnkeyatts
+             ORDER BY key.position),
+       COALESCE(pg_get_expr(i.indpred, i.indrelid), '')
 FROM pg_index i
 JOIN pg_class tbl ON tbl.oid = i.indrelid
 JOIN pg_namespace n ON n.oid = tbl.relnamespace
 JOIN pg_class idx ON idx.oid = i.indexrelid
+JOIN pg_am am ON am.oid = idx.relam
 WHERE n.nspname = $1 AND tbl.relname = $2 AND NOT i.indisprimary
 ORDER BY idx.relname`, table.Schema, table.Name)
 	if err != nil {
@@ -252,7 +294,7 @@ ORDER BY idx.relname`, table.Schema, table.Name)
 	defer rows.Close()
 	for rows.Next() {
 		var i schema.Index
-		if err := rows.Scan(&i.Name, &i.Definition, &i.Unique, &i.ConstraintBacked); err != nil {
+		if err := rows.Scan(&i.Name, &i.Definition, &i.Unique, &i.ConstraintBacked, &i.Method, &i.Keys, &i.IncludedColumns, &i.Predicate); err != nil {
 			return err
 		}
 		table.Indexes = append(table.Indexes, i)

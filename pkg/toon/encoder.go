@@ -1,0 +1,251 @@
+// Package toon renders a database-neutral schema model as TOON text.
+package toon
+
+import (
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
+	"github.com/kamil5b/pgschema2toon/pkg/schema"
+)
+
+var plainIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*$`)
+
+// Encode writes db in deterministic schema, table, and member order. Slice
+// ordering in the model is significant; extractors are responsible for it.
+func Encode(w io.Writer, db *schema.Database) error {
+	if w == nil {
+		return fmt.Errorf("toon: nil writer")
+	}
+	if db == nil {
+		return fmt.Errorf("toon: nil database")
+	}
+	e := encoder{w: w, multipleSchemas: len(db.Schemas) > 1}
+	for _, namespace := range db.Schemas {
+		for _, table := range namespace.Tables {
+			if err := e.table(namespace.Name, table); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+type encoder struct {
+	w               io.Writer
+	multipleSchemas bool
+}
+
+func (e encoder) printf(format string, args ...any) error {
+	_, err := fmt.Fprintf(e.w, format, args...)
+	return err
+}
+
+func (e encoder) table(namespace string, table schema.Table) error {
+	name := identifier(table.Name)
+	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+		name = identifier(namespace) + "." + name
+	}
+	if err := e.printf("[%s]\n", name); err != nil {
+		return err
+	}
+	for _, line := range commentLines(table.Comment) {
+		if err := e.printf("# %s\n", line); err != nil {
+			return err
+		}
+	}
+
+	pk := make(map[string]bool)
+	if table.PrimaryKey != nil {
+		for _, column := range table.PrimaryKey.Columns {
+			pk[column] = true
+		}
+	}
+	inline := make(map[string]schema.ForeignKey)
+	for _, fk := range table.ForeignKeys {
+		if len(fk.LocalColumns) == 1 && len(fk.ReferencedColumns) == 1 {
+			inline[fk.LocalColumns[0]] = fk
+		}
+	}
+	for _, column := range table.Columns {
+		tags := make([]string, 0, 4)
+		if pk[column.Name] {
+			tags = append(tags, "pk")
+		}
+		if !column.Nullable {
+			tags = append(tags, "req")
+		}
+		if column.Identity != "" {
+			tags = append(tags, "identity="+identityName(column.Identity))
+		}
+		if column.Generated != "" {
+			tags = append(tags, "generated="+generatedName(column.Generated))
+		}
+		tagText := ""
+		if len(tags) != 0 {
+			tagText = " {" + strings.Join(tags, ",") + "}"
+		}
+		if err := e.printf("  %s %s%s", identifier(column.Name), shrink(column.NativeType), tagText); err != nil {
+			return err
+		}
+		if fk, ok := inline[column.Name]; ok {
+			if err := e.printf(" -> %s", reference(table.Schema, fk)); err != nil {
+				return err
+			}
+			if err := e.actions(fk); err != nil {
+				return err
+			}
+		}
+		if column.Default != "" {
+			if err := e.printf(" = %s", singleLine(column.Default)); err != nil {
+				return err
+			}
+		}
+		comments := commentLines(column.Comment)
+		if len(comments) > 0 {
+			if err := e.printf(" // %s", comments[0]); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+		if len(comments) > 1 {
+			for _, line := range comments[1:] {
+				if err := e.printf("  // %s\n", line); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	for _, fk := range table.ForeignKeys {
+		if len(fk.LocalColumns) == 1 && len(fk.ReferencedColumns) == 1 {
+			continue
+		}
+		if err := e.printf("  ref (%s) -> %s", identifiers(fk.LocalColumns), reference(table.Schema, fk)); err != nil {
+			return err
+		}
+		if err := e.actions(fk); err != nil {
+			return err
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
+	if len(table.Uniques)+len(table.Checks)+len(table.Exclusions) > 0 {
+		if err := e.printf("@constraints\n"); err != nil {
+			return err
+		}
+		for _, unique := range table.Uniques {
+			if err := e.printf("  %s: unique (%s)\n", identifier(unique.Name), identifiers(unique.Columns)); err != nil {
+				return err
+			}
+		}
+		for _, check := range table.Checks {
+			if err := e.printf("  %s: %s\n", identifier(check.Name), singleLine(check.Expression)); err != nil {
+				return err
+			}
+		}
+		for _, exclusion := range table.Exclusions {
+			if err := e.printf("  %s: %s\n", identifier(exclusion.Name), singleLine(exclusion.Definition)); err != nil {
+				return err
+			}
+		}
+	}
+	if len(table.Indexes) > 0 {
+		if err := e.printf("@indices\n"); err != nil {
+			return err
+		}
+		for _, index := range table.Indexes {
+			definition := indexDefinition(index)
+			if err := e.printf("  %s: %s\n", identifier(index.Name), definition); err != nil {
+				return err
+			}
+		}
+	}
+	return e.printf("\n")
+}
+
+func (e encoder) actions(fk schema.ForeignKey) error {
+	var actions []string
+	if fk.OnUpdate != "" && fk.OnUpdate != "NO ACTION" {
+		actions = append(actions, "on_update="+strings.ToLower(strings.ReplaceAll(fk.OnUpdate, " ", "_")))
+	}
+	if fk.OnDelete != "" && fk.OnDelete != "NO ACTION" {
+		actions = append(actions, "on_delete="+strings.ToLower(strings.ReplaceAll(fk.OnDelete, " ", "_")))
+	}
+	if len(actions) != 0 {
+		return e.printf(" {%s}", strings.Join(actions, ","))
+	}
+	return nil
+}
+
+func reference(localSchema string, fk schema.ForeignKey) string {
+	table := identifier(fk.ReferencedTable)
+	if fk.ReferencedSchema != "" && fk.ReferencedSchema != localSchema {
+		table = identifier(fk.ReferencedSchema) + "." + table
+	}
+	return table + "(" + identifiers(fk.ReferencedColumns) + ")"
+}
+
+func identifier(value string) string {
+	if plainIdentifier.MatchString(value) {
+		return value
+	}
+	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
+}
+func identifiers(values []string) string {
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = identifier(value)
+	}
+	return strings.Join(quoted, ",")
+}
+func commentLines(value string) []string {
+	if value == "" {
+		return nil
+	}
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.Split(value, "\n")
+}
+func singleLine(value string) string { return strings.Join(commentLines(value), `\n`) }
+func identityName(value string) string {
+	if value == "a" {
+		return "always"
+	}
+	if value == "d" {
+		return "default"
+	}
+	return value
+}
+func generatedName(value string) string {
+	if value == "s" {
+		return "stored"
+	}
+	return value
+}
+func shrink(value string) string {
+	value = strings.ReplaceAll(value, "character varying", "varchar")
+	value = strings.ReplaceAll(value, "timestamp with time zone", "timestamptz")
+	return strings.TrimSpace(value)
+}
+func indexDefinition(index schema.Index) string {
+	if index.Method != "" && len(index.Keys) != 0 {
+		definition := index.Method + " (" + strings.Join(index.Keys, ", ") + ")"
+		if len(index.IncludedColumns) != 0 {
+			definition += " INCLUDE (" + identifiers(index.IncludedColumns) + ")"
+		}
+		if index.Predicate != "" {
+			definition += " WHERE " + singleLine(index.Predicate)
+		}
+		return definition
+	}
+	parts := strings.SplitN(index.Definition, " USING ", 2)
+	if len(parts) == 2 {
+		return parts[1]
+	}
+	return singleLine(index.Definition)
+}
