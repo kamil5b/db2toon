@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/internal/database/duckdb"
 	"github.com/kamil5b/db2toon/internal/database/postgres"
+	"github.com/kamil5b/db2toon/internal/database/sqlite"
 	"github.com/kamil5b/db2toon/pkg/toon"
 )
 
@@ -44,14 +46,20 @@ type Capabilities struct {
 }
 
 func CapabilitiesFor(dialect string) (Capabilities, bool) {
-	if strings.ToLower(dialect) != "postgres" {
+	switch strings.ToLower(dialect) {
+	case "postgres":
+		return Capabilities{Dialect: "postgres", Options: []string{
+			"schemas", "include_views", "include_partitioned", "example_sample",
+			"example_sample_ordered", "exclude_tables", "exclude_example_tables",
+			"exclude_example_fields", "seed",
+		}}, true
+	case "sqlite":
+		return Capabilities{Dialect: "sqlite", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case "duckdb":
+		return Capabilities{Dialect: "duckdb", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	default:
 		return Capabilities{}, false
 	}
-	return Capabilities{Dialect: "postgres", Options: []string{
-		"schemas", "include_views", "include_partitioned", "example_sample",
-		"example_sample_ordered", "exclude_tables", "exclude_example_tables",
-		"exclude_example_fields", "seed",
-	}}, true
 }
 
 type Error struct {
@@ -94,7 +102,16 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	extractor, err := postgres.New(ctx, req.DB)
+	var extractor database.Extractor
+	var err error
+	switch dialect {
+	case "postgres":
+		extractor, err = postgres.New(ctx, req.DB)
+	case "sqlite":
+		extractor, err = sqlite.New(ctx, req.DB)
+	case "duckdb":
+		extractor, err = duckdb.New(ctx, req.DB)
+	}
 	if err != nil {
 		return "", &Error{"CONNECTION_FAILED", "unable to connect to the database", true}
 	}
