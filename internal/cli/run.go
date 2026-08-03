@@ -6,14 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
-	"github.com/kamil5b/db2toon/internal/database"
-	"github.com/kamil5b/db2toon/internal/database/postgres"
-	"github.com/kamil5b/db2toon/pkg/toon"
+	"github.com/kamil5b/db2toon/internal/service"
 )
 
 // Run executes the database-neutral CLI. fixedDialect is used by compatibility
@@ -61,41 +57,27 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, *timeout)
-	defer cancel()
-
-	extractor, err := postgres.New(ctx, *dbURL)
-	if err != nil {
-		return fmt.Errorf("DB connection error: %w", err)
-	}
-	defer extractor.Close(context.Background())
-
-	db, err := extractor.Extract(ctx, database.ExtractOptions{
-		Schemas:              schemas,
-		IncludePartitioned:   *includePartitioned,
-		ExcludeTables:        splitCommaSeparated(*excludeTables),
-		ExcludeExampleTables: splitCommaSeparated(*excludeExampleTables),
-		ExcludeExampleFields: splitCommaSeparated(*excludeExampleFields),
-		ExampleSample:        *exampleSample,
-		ExampleSampleOrdered: *exampleSampleOrdered,
-		Seed:                 *seed,
-	})
-	if err != nil {
-		return fmt.Errorf("schema extraction failed: %w", err)
+	toonText, serviceErr := service.Extract(context.Background(), service.Request{Dialect: dialect, DB: *dbURL, Options: service.Options{
+		Schemas: schemas, IncludePartitioned: *includePartitioned,
+		ExcludeTables: splitCommaSeparated(*excludeTables), ExcludeExampleTables: splitCommaSeparated(*excludeExampleTables),
+		ExcludeExampleFields: splitCommaSeparated(*excludeExampleFields), ExampleSample: *exampleSample,
+		ExampleSampleOrdered: *exampleSampleOrdered, Seed: *seed, Timeout: timeout.String(),
+	}})
+	if serviceErr != nil {
+		return fmt.Errorf("%s: %s", serviceErr.Code, serviceErr.Message)
 	}
 
 	w := stdout
 	var file *os.File
 	if *output != "" {
-		file, err = os.Create(*output)
-		if err != nil {
-			return fmt.Errorf("create output: %w", err)
+		created, createErr := os.Create(*output)
+		if createErr != nil {
+			return fmt.Errorf("create output: %w", createErr)
 		}
+		file = created
 		w = file
 	}
-	if err := toon.Encode(w, db); err != nil {
+	if _, err := io.WriteString(w, toonText); err != nil {
 		if file != nil {
 			_ = file.Close()
 		}

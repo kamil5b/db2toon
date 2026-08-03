@@ -28,6 +28,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test -tags=integration ./internal/database/postgres
+      - run: go test -tags=integration ./internal/database/postgres ./internal/mcp
         env:
           CGO_ENABLED: 0

@@ -62,37 +62,7 @@ pkg/toon/
     encoder_test.go
 ```
 
-## Phase 1: LLM tool integration
-
-Make `db2toon` available to LLM tools through a small, database-neutral tool
-interface. The tool should reuse the same extraction and encoding pipeline as
-the CLI rather than shelling out to a separately maintained implementation.
-
-Initial tool contract:
-
-- `dialect`: database adapter to use, such as `postgres`, `sqlite`, or `mysql`
-- `db`: connection string or database path supplied by the caller
-- extraction options matching the CLI where supported
-- result: TOON text, with structured errors for invalid options or adapter failures
-
-Safety and operational requirements:
-
-- Keep the tool read-only; schema extraction must not mutate the database.
-- Do not expose credentials in errors, logs, or tool results.
-- Apply connection and execution timeouts and enforce sensible output limits.
-- Report adapter capabilities so callers know which options are supported.
-- Preserve `pg2toon` and `db2toon` as supported local CLI interfaces.
-
-Implementation sequence:
-
-1. Move shared extraction/encoding orchestration behind an internal service API.
-2. Define the tool schema and capability/error model.
-3. Add an MCP-compatible server or adapter for the supported LLM tool host.
-4. Add unit tests for argument mapping, errors, timeouts, and redaction.
-5. Add an integration test that invokes the tool against the PostgreSQL test container.
-6. Document local configuration, permissions, and example tool calls.
-
-## Phase 2: Additional databases
+## Phase 1: Additional databases
 
 Database support is divided into priority tiers. Each adapter must pass a
 shared conformance suite and publish its capabilities.
@@ -160,9 +130,8 @@ Cross-database considerations:
 
 ## Pull request strategy
 
-1. **Phase 1 LLM tool interface and PostgreSQL integration.**
-2. **Priority 1 direct adapters.**
-3. **Priority 2 Testcontainers adapters.**
-4. **Priority 3 remaining adapters.**
+1. **Priority 1 direct adapters.**
+2. **Priority 2 Testcontainers adapters.**
+3. **Priority 3 remaining adapters.**
 
 Keeping these changes separated makes review easier and prevents the abstraction work from hiding PostgreSQL correctness regressions.
