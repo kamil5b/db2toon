@@ -22,8 +22,8 @@ A CLI tool that converts PostgreSQL database schemas into the Toon schema defini
 ```bash
 git clone https://github.com/kamil5b/db2toon.git
 cd db2toon
-go build -o output/db2toon ./cmd/db2toon
-go build -o output/pg2toon ./cmd/pg2toon
+CGO_ENABLED=0 go build -o output/db2toon ./cmd/db2toon
+CGO_ENABLED=0 go build -o output/pg2toon ./cmd/pg2toon
 ```
 
 ### From Releases

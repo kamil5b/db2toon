@@ -1,1 +1,9 @@
 output/
+
+# Disposable direct-adapter test artifacts
+.tmp/
+testdata/.tmp/
+*.test.db
+*.test.sqlite
+*.test.sqlite3
+*.test.duckdb
