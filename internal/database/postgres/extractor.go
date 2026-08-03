@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/kamil5b/pgschema2toon/internal/database"
-	"github.com/kamil5b/pgschema2toon/pkg/schema"
+	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 type Extractor struct {

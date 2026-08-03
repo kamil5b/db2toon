@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kamil5b/pgschema2toon/pkg/schema"
+	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 var plainIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*$`)

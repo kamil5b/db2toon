@@ -1,8 +1,8 @@
-# pgschema2toon development plan
+# db2toon development plan
 
 ## Goal
 
-Evolve `pgschema2toon` from a PostgreSQL-specific proof of concept into a database-neutral schema extraction and TOON rendering tool while preserving the current CLI behavior.
+Evolve `db2toon` from a PostgreSQL-specific proof of concept into a database-neutral schema extraction and TOON rendering tool while preserving the current `pg2toon` CLI behavior.
 
 ## Target architecture
 
@@ -22,15 +22,19 @@ Database-independent TOON encoder
 Suggested packages:
 
 ```text
-cmd/pg2toon/
+cmd/db2toon/
     main.go
+cmd/pg2toon/
+    main.go              # compatibility wrapper
 
 internal/database/
     extractor.go
-    factory.go
     postgres/
         extractor.go
         queries.go
+    mysql/
+    sqlite/
+    mongodb/
 
 pkg/schema/
     model.go

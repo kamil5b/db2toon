@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/kamil5b/pgschema2toon/pkg/schema"
+	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 func TestEncodeGolden(t *testing.T) {

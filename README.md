@@ -1,10 +1,10 @@
-# pgschema2toon
+# db2toon
 
 A CLI tool that converts PostgreSQL database schemas into the Toon schema definition format.
 
 ## Overview
 
-`pgschema2toon` connects to a PostgreSQL database and extracts schema information (tables, columns, types, constraints, indexes, and comments), then converts it into the human-readable Toon format for database design documentation and visualization.
+`db2toon` connects to a database and extracts schema information (tables, columns, types, constraints, indexes, and comments), then converts it into the human-readable Toon format for database design documentation and visualization. PostgreSQL is currently supported; additional adapters can share the same schema model and encoder.
 
 ## Features
 
@@ -20,34 +20,38 @@ A CLI tool that converts PostgreSQL database schemas into the Toon schema defini
 ### From Source
 
 ```bash
-git clone https://github.com/kamil5b/pgschema2toon.git
-cd pgschema2toon
-go build -o pg2toon ./cmd/pg2toon
+git clone https://github.com/kamil5b/db2toon.git
+cd db2toon
+go build -o output/db2toon ./cmd/db2toon
+go build -o output/pg2toon ./cmd/pg2toon
 ```
 
 ### From Releases
 
-Download pre-built binaries from the [releases page](https://github.com/kamil5b/pgschema2toon/releases) for your platform.
+Download pre-built binaries from the [releases page](https://github.com/kamil5b/db2toon/releases) for your platform.
 
 ## Usage
 
 ### Basic Usage
 
 ```bash
+./db2toon postgres -db "postgresql://user:password@localhost/dbname"
+
+# Compatibility command; PostgreSQL is selected automatically.
 ./pg2toon -db "postgresql://user:password@localhost/dbname"
 ```
 
 ### Save to File
 
 ```bash
-./pg2toon -db "postgresql://user:password@localhost/dbname" -out schema.toon
+./db2toon postgres -db "postgresql://user:password@localhost/dbname" -out schema.toon
 ```
 
 Include up to two sample rows per table in the TOON output, using a stable
 ordering and a reproducible sample seed:
 
 ```bash
-./pg2toon -db "postgresql://user:password@localhost/dbname" \
+./db2toon postgres -db "postgresql://user:password@localhost/dbname" \
   -example-sample=2 -example-sample-ordered=true -seed=42
 ```
 
@@ -57,13 +61,13 @@ Select multiple schemas, include partitioned tables, and change the default
 30-second operation timeout with:
 
 ```bash
-./pg2toon -db "$DATABASE_URL" -schema audit
-./pg2toon -db "$DATABASE_URL" -schemas public,audit -include-partitioned -timeout 1m
+./db2toon postgres -db "$DATABASE_URL" -schema audit
+./db2toon postgres -db "$DATABASE_URL" -schemas public,audit -include-partitioned -timeout 1m
 ```
 
 ### Flags
 
-- `-db string`: PostgreSQL connection URL (required)
+- `-db string`: Database connection URL (required)
 - `-out string`: Output file path (optional, defaults to stdout)
 - `-schema string`: A single schema to extract (defaults to `public`)
 - `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`

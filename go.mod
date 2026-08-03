@@ -1,4 +1,4 @@
-module github.com/kamil5b/pgschema2toon
+module github.com/kamil5b/db2toon
 
 go 1.26.0
 

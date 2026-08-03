@@ -3,7 +3,7 @@ package database
 import (
 	"context"
 
-	"github.com/kamil5b/pgschema2toon/pkg/schema"
+	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 type ExtractOptions struct {

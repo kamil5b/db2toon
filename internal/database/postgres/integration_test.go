@@ -1,6 +1,6 @@
 //go:build integration
 
-package main
+package postgres
 
 import (
 	"bytes"
@@ -11,10 +11,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/kamil5b/pgschema2toon/internal/database"
-	pgadapter "github.com/kamil5b/pgschema2toon/internal/database/postgres"
-	"github.com/kamil5b/pgschema2toon/pkg/schema"
-	"github.com/kamil5b/pgschema2toon/pkg/toon"
+	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/pkg/schema"
+	"github.com/kamil5b/db2toon/pkg/toon"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -151,7 +150,7 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 		t.Fatalf("create schema fixture: %v", err)
 	}
 
-	extractor, err := pgadapter.New(ctx, connectionString)
+	extractor, err := New(ctx, connectionString)
 	if err != nil {
 		t.Fatalf("create extractor: %v", err)
 	}

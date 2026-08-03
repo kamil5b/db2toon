@@ -31,9 +31,10 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - uses: actions/setup-go@v4
+            - uses: actions/setup-go@v5
               with:
-                  go-version: "1.26.0"
+                  go-version-file: go.mod
+                  cache: true
 
             - name: Build
               env:
@@ -41,18 +42,16 @@ jobs:
                   GOOS: ${{ matrix.goos }}
                   GOARCH: ${{ matrix.goarch }}
               run: |
-                  BINARY_NAME="pgschema2toon"
-                  if [ "${{ matrix.goos }}" = "windows" ]; then
-                    BINARY_NAME="${BINARY_NAME}.exe"
-                  fi
                   mkdir -p dist
-                  go build -o dist/${BINARY_NAME} ./cmd/pg2toon
-
-                  FINAL_NAME="${{ matrix.goarch }}-${{ matrix.goos }}-pgschema2toon"
-                  if [ "${{ matrix.goos }}" = "windows" ]; then
-                    FINAL_NAME="${FINAL_NAME}.exe"
-                  fi
-                  mv dist/${BINARY_NAME} dist/${FINAL_NAME}
+                  for command in db2toon pg2toon; do
+                    binary_name="${command}"
+                    if [ "${{ matrix.goos }}" = "windows" ]; then
+                      binary_name="${binary_name}.exe"
+                    fi
+                    go build -o "dist/${binary_name}" "./cmd/${command}"
+                    final_name="${{ matrix.goarch }}-${{ matrix.goos }}-${binary_name}"
+                    mv "dist/${binary_name}" "dist/${final_name}"
+                  done
 
             - name: Upload to Release
               uses: softprops/action-gh-release@v1
