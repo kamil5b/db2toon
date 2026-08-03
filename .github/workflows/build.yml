@@ -43,7 +43,7 @@ jobs:
                   GOARCH: ${{ matrix.goarch }}
               run: |
                   mkdir -p dist
-                  for command in db2toon pg2toon; do
+                  for command in db2toon pg2toon db2toon-mcp; do
                     binary_name="${command}"
                     if [ "${{ matrix.goos }}" = "windows" ]; then
                       binary_name="${binary_name}.exe"

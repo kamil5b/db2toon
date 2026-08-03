@@ -32,6 +32,22 @@ Download pre-built binaries from the [releases page](https://github.com/kamil5b/
 
 ## Usage
 
+### LLM tool integration
+
+Build and run the MCP-compatible stdio server:
+
+```bash
+CGO_ENABLED=0 go build -o output/db2toon-mcp ./cmd/db2toon-mcp
+./output/db2toon-mcp
+```
+
+The server exposes `db2toon.extract_schema`. Its required arguments are
+`dialect` (`postgres`) and `db`; optional extraction settings are supplied in
+an `options` object. The tool is read-only, uses a 30-second default timeout,
+and limits responses to 4 MiB. Set `options.timeout` and
+`options.max_output_bytes` to lower limits when needed. Connection strings are
+never included in tool errors or results.
+
 ### Basic Usage
 
 ```bash
