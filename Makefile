@@ -12,10 +12,10 @@ build:
 	CGO_ENABLED=0 $(GO) build -o $(BINARY) ./cmd/pg2toon
 
 test:
-	CGO_ENABLED=0 $(GO) test ./...
+	CGO_ENABLED=0 $(GO) test -v ./...
 
 test-integration:
-	CGO_ENABLED=0 $(GO) test -tags=integration ./cmd/pg2toon
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./cmd/pg2toon
 
 test-all: test test-integration
 

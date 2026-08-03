@@ -26,8 +26,9 @@ type Table struct {
 // Example contains sampled rows for a table. Values are database values and
 // are rendered by the TOON encoder.
 type Example struct {
-	Columns []string
-	Rows    [][]any
+	Columns     []string
+	ColumnTypes []string
+	Rows        [][]any
 }
 
 type Column struct {

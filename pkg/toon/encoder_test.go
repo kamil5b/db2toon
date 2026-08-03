@@ -73,6 +73,27 @@ func TestEncodeExamples(t *testing.T) {
 	}
 }
 
+func TestEncodeStructuredExampleValues(t *testing.T) {
+	db := &schema.Database{Schemas: []schema.Schema{{Tables: []schema.Table{{
+		Name:    "documents",
+		Columns: []schema.Column{{Name: "id", NativeType: "uuid", Nullable: true}, {Name: "body", NativeType: "jsonb", Nullable: true}},
+		Example: &schema.Example{
+			Columns:     []string{"id", "body"},
+			ColumnTypes: []string{"uuid", "jsonb"},
+			Rows:        [][]any{{[16]byte{0x31, 0xd6, 0x09, 0x9e, 0x7b, 0xb9, 0x4c, 0x12, 0xb5, 0xe4, 0xbe, 0xa7, 0x72, 0xc1, 0xc7, 0x2b}, map[string]any{"kind": "note"}}},
+		},
+	}}}}}
+
+	var got bytes.Buffer
+	if err := Encode(&got, db); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	want := "[documents]\n  id uuid\n  body jsonb\n@example[1]{id,body}:\n  31d6099e-7bb9-4c12-b5e4-bea772c1c72b,\"{\\\"kind\\\":\\\"note\\\"}\"\n\n"
+	if got.String() != want {
+		t.Fatalf("unexpected output\n--- got ---\n%s--- want ---\n%s", got.String(), want)
+	}
+}
+
 func TestEncodeRejectsNil(t *testing.T) {
 	if err := Encode(&bytes.Buffer{}, nil); err == nil {
 		t.Fatal("expected nil database error")

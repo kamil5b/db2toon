@@ -2,6 +2,8 @@
 package toon
 
 import (
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -174,7 +176,11 @@ func (e encoder) table(namespace string, table schema.Table) error {
 		for _, row := range table.Example.Rows {
 			values := make([]string, len(row))
 			for i, value := range row {
-				values[i] = exampleValue(value)
+				var columnType string
+				if i < len(table.Example.ColumnTypes) {
+					columnType = table.Example.ColumnTypes[i]
+				}
+				values[i] = exampleValue(value, columnType)
 			}
 			if err := e.printf("  %s\n", strings.Join(values, ",")); err != nil {
 				return err
@@ -184,19 +190,41 @@ func (e encoder) table(namespace string, table schema.Table) error {
 	return e.printf("\n")
 }
 
-func exampleValue(value any) string {
+func exampleValue(value any, columnType string) string {
 	switch value := value.(type) {
 	case nil:
 		return "null"
 	case []byte:
+		if strings.EqualFold(strings.TrimSpace(columnType), "uuid") && len(value) == 16 {
+			return formatUUID(value)
+		}
 		return quoteExampleValue(string(value))
+	case [16]byte:
+		if strings.EqualFold(strings.TrimSpace(columnType), "uuid") {
+			return formatUUID(value[:])
+		}
+		return quoteExampleValue(string(value[:]))
 	case time.Time:
 		return quoteExampleValue(value.Format(time.RFC3339Nano))
 	case string:
 		return quoteExampleValue(value)
 	default:
+		if encoded, err := json.Marshal(value); err == nil {
+			text := string(encoded)
+			if strings.HasPrefix(text, "{") || strings.HasPrefix(text, "[") {
+				return quoteExampleValue(text)
+			}
+		}
 		return fmt.Sprint(value)
 	}
+}
+
+func formatUUID(value []byte) string {
+	return hex.EncodeToString(value[0:4]) + "-" +
+		hex.EncodeToString(value[4:6]) + "-" +
+		hex.EncodeToString(value[6:8]) + "-" +
+		hex.EncodeToString(value[8:10]) + "-" +
+		hex.EncodeToString(value[10:16])
 }
 
 func quoteExampleValue(value string) string {

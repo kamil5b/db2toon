@@ -145,9 +145,13 @@ func (e *Extractor) loadExample(ctx context.Context, table *schema.Table, opts d
 	}
 	defer rows.Close()
 
-	example := &schema.Example{Columns: make([]string, 0, len(table.Columns))}
+	example := &schema.Example{
+		Columns:     make([]string, 0, len(table.Columns)),
+		ColumnTypes: make([]string, 0, len(table.Columns)),
+	}
 	for _, column := range table.Columns {
 		example.Columns = append(example.Columns, column.Name)
+		example.ColumnTypes = append(example.ColumnTypes, column.NativeType)
 	}
 	for rows.Next() {
 		values := make([]any, len(table.Columns))

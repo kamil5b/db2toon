@@ -306,6 +306,7 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 		t.Fatalf("encode examples: %v", err)
 	}
 	toonOutput := output.String()
+	t.Logf("TOON output:\n%s", toonOutput)
 	if !strings.Contains(toonOutput, "@example[2]{id,email,display_name}:\n  1,alice@example.com,Alice\n  2,bob@example.com,Bob") {
 		t.Fatalf("users examples missing from TOON output:\n%s", toonOutput)
 	}
