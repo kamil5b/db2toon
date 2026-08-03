@@ -23,8 +23,8 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		dialect = strings.ToLower(args[0])
 		args = args[1:]
 	}
-	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" {
-		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb)", dialect)
+	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" && dialect != "mysql" && dialect != "mariadb" && dialect != "cockroachdb" {
+		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb, mysql, mariadb, cockroachdb)", dialect)
 	}
 
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
@@ -33,6 +33,9 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	defaultSchema := "public"
 	if dialect == "sqlite" || dialect == "duckdb" {
 		defaultSchema = "main"
+	}
+	if dialect == "mysql" || dialect == "mariadb" {
+		defaultSchema = ""
 	}
 	schemaName := flags.String("schema", "", "schema to extract (default "+defaultSchema+")")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
@@ -120,6 +123,9 @@ func selectedSchemasWithDefault(schemaName, schemaNames, defaultSchema string) (
 	}
 	if len(schemas) != 0 {
 		return schemas, nil
+	}
+	if defaultSchema == "" {
+		return nil, nil
 	}
 	return []string{defaultSchema}, nil
 }

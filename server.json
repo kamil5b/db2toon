@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.kamil5b/db2toon-mcp",
   "title": "DB2TOON MCP",
-  "description": "Read-only PostgreSQL, SQLite, and DuckDB schema extraction to compact TOON for MCP clients.",
+  "description": "Read-only PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, and CockroachDB schema extraction to compact TOON for MCP clients.",
   "repository": {
     "url": "https://github.com/kamil5b/db2toon",
     "source": "github"

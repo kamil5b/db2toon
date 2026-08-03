@@ -13,7 +13,7 @@ func TestExtractValidatesWithoutConnecting(t *testing.T) {
 		want    string
 	}{
 		{"missing dialect", Request{DB: "postgres://user:secret@host/db"}, "dialect is required"},
-		{"unsupported dialect", Request{Dialect: "mysql", DB: "unused"}, "unsupported database dialect"},
+		{"unsupported dialect", Request{Dialect: "oracle", DB: "unused"}, "unsupported database dialect"},
 		{"bad timeout", Request{Dialect: "postgres", DB: "unused", Options: Options{Timeout: "nope"}}, "positive duration"},
 		{"negative sample", Request{Dialect: "postgres", DB: "unused", Options: Options{ExampleSample: -1}}, "must not be negative"},
 	}
@@ -32,7 +32,7 @@ func TestCapabilities(t *testing.T) {
 	if !ok || capabilities.Dialect != "postgres" || len(capabilities.Options) == 0 {
 		t.Fatalf("unexpected capabilities: %#v, %v", capabilities, ok)
 	}
-	if _, ok := CapabilitiesFor("mysql"); ok {
-		t.Fatal("mysql should not be advertised")
+	if capabilities, ok := CapabilitiesFor("mysql"); !ok || capabilities.Dialect != "mysql" {
+		t.Fatalf("mysql should be advertised: %#v, %v", capabilities, ok)
 	}
 }

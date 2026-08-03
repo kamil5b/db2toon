@@ -25,7 +25,18 @@ func (e *Extractor) Close(context.Context) error { return e.db.Close() }
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	sch := opts.Schemas
 	if len(sch) == 0 {
-		sch = []string{"main"}
+		if e.dialect == "mysql" {
+			var current sql.NullString
+			if err := e.db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&current); err != nil {
+				return nil, fmt.Errorf("query current database: %w", err)
+			}
+			if !current.Valid || current.String == "" {
+				return &schema.Database{}, nil
+			}
+			sch = []string{current.String}
+		} else {
+			sch = []string{"main"}
+		}
 	}
 	var out schema.Database
 	for _, name := range sch {
@@ -51,12 +62,14 @@ func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (
 func (e *Extractor) tables(ctx context.Context, namespace string, opts database.ExtractOptions) ([]schema.Table, error) {
 	var q string
 	if e.dialect == "sqlite" {
-		q = fmt.Sprintf("SELECT name, type, COALESCE(sql, '') FROM %s.sqlite_master WHERE type IN ('table'%s) AND name NOT LIKE 'sqlite_%%' ORDER BY name", quoteIdent(namespace), viewsSQL(opts.IncludeViews))
+		q = fmt.Sprintf("SELECT name, type, '' FROM %s.sqlite_master WHERE type IN ('table'%s) AND name NOT LIKE 'sqlite_%%' ORDER BY name", quoteIdent(namespace), viewsSQL(opts.IncludeViews, e.dialect))
+	} else if e.dialect == "mysql" {
+		q = "SELECT table_name, table_type, COALESCE(table_comment,'') FROM information_schema.tables WHERE table_schema = ? AND table_type IN ('BASE TABLE','LOCAL TEMPORARY','TEMPORARY'" + viewsSQL(opts.IncludeViews, e.dialect) + ") ORDER BY table_name"
 	} else {
-		q = "SELECT table_name, table_type, COALESCE('','') FROM information_schema.tables WHERE table_schema = ? AND table_type IN ('BASE TABLE','LOCAL TEMPORARY','TEMPORARY'" + viewsSQL(opts.IncludeViews) + ") ORDER BY table_name"
+		q = "SELECT table_name, table_type, COALESCE('','') FROM information_schema.tables WHERE table_schema = ? AND table_type IN ('BASE TABLE','LOCAL TEMPORARY','TEMPORARY'" + viewsSQL(opts.IncludeViews, e.dialect) + ") ORDER BY table_name"
 	}
 	args := []any{}
-	if e.dialect == "duckdb" {
+	if e.dialect == "duckdb" || e.dialect == "mysql" {
 		args = append(args, namespace)
 	}
 	rows, err := e.db.QueryContext(ctx, q, args...)
@@ -82,9 +95,12 @@ func (e *Extractor) tables(ctx context.Context, namespace string, opts database.
 	return result, rows.Err()
 }
 
-func viewsSQL(include bool) string {
+func viewsSQL(include bool, dialect string) string {
 	if include {
-		return ", 'view'"
+		if dialect == "sqlite" {
+			return ", 'view'"
+		}
+		return ", 'VIEW'"
 	}
 	return ""
 }
@@ -106,7 +122,7 @@ func (e *Extractor) populate(ctx context.Context, t *schema.Table, opts database
 }
 
 func (e *Extractor) loadExample(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
-	rows, err := e.db.QueryContext(ctx, fmt.Sprintf("SELECT * FROM %s.%s LIMIT ?", quoteIdent(t.Schema), quoteIdent(t.Name)), opts.ExampleSample)
+	rows, err := e.db.QueryContext(ctx, fmt.Sprintf("SELECT * FROM %s.%s LIMIT ?", e.quoteIdent(t.Schema), e.quoteIdent(t.Name)), opts.ExampleSample)
 	if err != nil {
 		return fmt.Errorf("query examples for %s.%s: %w", t.Schema, t.Name, err)
 	}
@@ -257,7 +273,11 @@ func (e *Extractor) sqliteKeys(ctx context.Context, t *schema.Table, opts databa
 }
 
 func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
-	rows, err := e.db.QueryContext(ctx, "SELECT column_name, data_type, is_nullable, COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position", t.Schema, t.Name)
+	query := "SELECT column_name, data_type, is_nullable, COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position"
+	if e.dialect == "mysql" {
+		query = "SELECT column_name, data_type, is_nullable, COALESCE(column_default,''), COALESCE(column_comment,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position"
+	}
+	rows, err := e.db.QueryContext(ctx, query, t.Schema, t.Name)
 	if err != nil {
 		return err
 	}
@@ -265,7 +285,11 @@ func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts da
 	for rows.Next() {
 		var c schema.Column
 		var nullable string
-		if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &c.Default); err != nil {
+		if e.dialect == "mysql" {
+			if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &c.Default, &c.Comment); err != nil {
+				return err
+			}
+		} else if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &c.Default); err != nil {
 			return err
 		}
 		c.Nullable = nullable == "YES"
@@ -274,7 +298,86 @@ func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts da
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	return e.duckConstraints(ctx, t, opts)
+	if err := e.duckConstraints(ctx, t, opts); err != nil {
+		return err
+	}
+	if e.dialect == "mysql" {
+		if err := e.mysqlForeignKeys(ctx, t); err != nil {
+			return err
+		}
+		if err := e.mysqlChecks(ctx, t); err != nil {
+			return err
+		}
+		return e.mysqlIndexes(ctx, t)
+	}
+	return nil
+}
+
+func (e *Extractor) mysqlChecks(ctx context.Context, t *schema.Table) error {
+	rows, err := e.db.QueryContext(ctx, "SELECT c.constraint_name, c.check_clause FROM information_schema.check_constraints c JOIN information_schema.table_constraints tc ON tc.constraint_schema = c.constraint_schema AND tc.constraint_name = c.constraint_name WHERE c.constraint_schema = ? AND tc.table_name = ? ORDER BY c.constraint_name", t.Schema, t.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var check schema.CheckConstraint
+		if err := rows.Scan(&check.Name, &check.Expression); err != nil {
+			return err
+		}
+		t.Checks = append(t.Checks, check)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) mysqlIndexes(ctx context.Context, t *schema.Table) error {
+	rows, err := e.db.QueryContext(ctx, "SELECT index_name, non_unique, seq_in_index, column_name, index_type FROM information_schema.statistics WHERE table_schema = ? AND table_name = ? AND index_name <> 'PRIMARY' ORDER BY index_name, seq_in_index", t.Schema, t.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	positions := map[string]int{}
+	for rows.Next() {
+		var name, column, method string
+		var nonUnique, seq int
+		if err := rows.Scan(&name, &nonUnique, &seq, &column, &method); err != nil {
+			return err
+		}
+		position, ok := positions[name]
+		if !ok {
+			position = len(t.Indexes)
+			positions[name] = position
+			t.Indexes = append(t.Indexes, schema.Index{Name: name, Unique: nonUnique == 0, Method: strings.ToLower(method)})
+		}
+		t.Indexes[position].Keys = append(t.Indexes[position].Keys, column)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) mysqlForeignKeys(ctx context.Context, t *schema.Table) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT k.constraint_name, k.column_name, k.referenced_table_name, k.referenced_column_name, COALESCE(rc.update_rule, 'NO ACTION'), COALESCE(rc.delete_rule, 'NO ACTION')
+FROM information_schema.key_column_usage k
+LEFT JOIN information_schema.referential_constraints rc ON rc.constraint_schema = k.constraint_schema AND rc.constraint_name = k.constraint_name AND rc.table_name = k.table_name
+WHERE k.table_schema = ? AND k.table_name = ? AND k.referenced_table_name IS NOT NULL ORDER BY k.constraint_name, k.ordinal_position`, t.Schema, t.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	positions := map[string]int{}
+	for rows.Next() {
+		var name, local, refTable, refColumn, update, delete string
+		if err := rows.Scan(&name, &local, &refTable, &refColumn, &update, &delete); err != nil {
+			return err
+		}
+		position, ok := positions[name]
+		if !ok {
+			position = len(t.ForeignKeys)
+			positions[name] = position
+			t.ForeignKeys = append(t.ForeignKeys, schema.ForeignKey{Name: name, ReferencedSchema: t.Schema, ReferencedTable: refTable, OnUpdate: update, OnDelete: delete})
+		}
+		t.ForeignKeys[position].LocalColumns = append(t.ForeignKeys[position].LocalColumns, local)
+		t.ForeignKeys[position].ReferencedColumns = append(t.ForeignKeys[position].ReferencedColumns, refColumn)
+	}
+	return rows.Err()
 }
 
 func (e *Extractor) duckConstraints(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
@@ -368,3 +471,10 @@ func sqliteChecks(table, createSQL string) []schema.CheckConstraint {
 	return checks
 }
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
+
+func (e *Extractor) quoteIdent(s string) string {
+	if e.dialect == "mysql" {
+		return "`" + strings.ReplaceAll(s, "`", "``") + "`"
+	}
+	return quoteIdent(s)
+}

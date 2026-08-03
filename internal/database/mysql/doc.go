@@ -1,4 +1,2 @@
-// Package mysql contains the MySQL database adapter.
-//
-// The adapter is intentionally developed on its own feature branch.
+// Package mysql extracts MySQL and MariaDB relational catalogs.
 package mysql

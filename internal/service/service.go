@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/internal/database/cockroachdb"
 	"github.com/kamil5b/db2toon/internal/database/duckdb"
+	"github.com/kamil5b/db2toon/internal/database/mysql"
 	"github.com/kamil5b/db2toon/internal/database/postgres"
 	"github.com/kamil5b/db2toon/internal/database/sqlite"
 	"github.com/kamil5b/db2toon/pkg/toon"
@@ -57,6 +59,14 @@ func CapabilitiesFor(dialect string) (Capabilities, bool) {
 		return Capabilities{Dialect: "sqlite", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
 	case "duckdb":
 		return Capabilities{Dialect: "duckdb", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case "mysql", "mariadb":
+		return Capabilities{Dialect: "mysql", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case "cockroachdb":
+		return Capabilities{Dialect: "cockroachdb", Options: []string{
+			"schemas", "include_views", "include_partitioned", "example_sample",
+			"example_sample_ordered", "exclude_tables", "exclude_example_tables",
+			"exclude_example_fields", "seed",
+		}}, true
 	default:
 		return Capabilities{}, false
 	}
@@ -111,6 +121,10 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 		extractor, err = sqlite.New(ctx, req.DB)
 	case "duckdb":
 		extractor, err = duckdb.New(ctx, req.DB)
+	case "mysql", "mariadb":
+		extractor, err = mysql.New(ctx, req.DB)
+	case "cockroachdb":
+		extractor, err = cockroachdb.New(ctx, req.DB)
 	}
 	if err != nil {
 		return "", &Error{"CONNECTION_FAILED", "unable to connect to the database", true}

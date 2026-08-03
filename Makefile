@@ -7,7 +7,7 @@ OUT ?= $(OUTPUT_DIR)/schema.toon
 DB_URL ?=
 OPTS ?=
 
-.PHONY: build test test-integration test-all run
+.PHONY: build test test-integration test-integration-mysql test-integration-cockroachdb test-all run
 
 build:
 	@mkdir -p $(OUTPUT_DIR)
@@ -20,6 +20,14 @@ test:
 
 test-integration:
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/postgres
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mysql
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/cockroachdb
+
+test-integration-cockroachdb:
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/cockroachdb
+
+test-integration-mysql:
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mysql
 
 test-all: test test-integration
 

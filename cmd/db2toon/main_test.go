@@ -14,8 +14,8 @@ func TestRunRequiresDialect(t *testing.T) {
 }
 
 func TestRunRejectsUnsupportedDialect(t *testing.T) {
-	err := cliRun([]string{"mysql", "-db", "unused"})
-	if err == nil || !strings.Contains(err.Error(), `unsupported database dialect "mysql"`) {
+	err := cliRun([]string{"oracle", "-db", "unused"})
+	if err == nil || !strings.Contains(err.Error(), `unsupported database dialect "oracle"`) {
 		t.Fatalf("run() error = %v, want unsupported dialect error", err)
 	}
 }
