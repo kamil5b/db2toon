@@ -138,6 +138,33 @@ Important rules:
 - Add output for defaults, unique/check constraints, composite relationships, and referential actions.
 - Add golden tests for escaping and deterministic output.
 
+### Table examples
+
+- Add the `-example-sample=n` flag, defaulting to `0`.
+- Add the `-example-sample-ordered=true` flag, defaulting to `false`.
+- Add the `-seed=n` flag, defaulting to `0`, to control pseudo-random sample selection.
+- When `-example-sample` is greater than zero, add an `@example` section to each table in the `.toon` output containing up to `n` rows sampled from that table.
+- When `-example-sample-ordered=true`, select example rows using a deterministic ordering; otherwise, allow the database to choose the sample rows.
+- When a non-zero `-seed` is provided, repeated runs against the same data produce the same sample rows.
+- When `-example-sample=0`, do not add `@example` sections.
+
+For example, `-example-sample=2 -example-sample-ordered=true` could produce:
+
+```toon
+[users]
+  id int {pk}
+  email varchar {req}
+  name varchar
+
+@example[2]{id,email,name}:
+  1,Alice,alice@example.com
+  2,Bob,bob@example.com
+```
+
+The `@example[n]{columns}:` header identifies the sampled row section, declares
+the number of rows and their columns, and the following rows contain the
+sample values.
+
 ## Phase 5: Additional databases
 
 Recommended order:

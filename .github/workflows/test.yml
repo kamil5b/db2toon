@@ -17,6 +17,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test ./...
+        env:
+          CGO_ENABLED: 0
 
   postgres-integration:
     runs-on: ubuntu-latest
@@ -27,3 +29,5 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go test -tags=integration ./cmd/pg2toon
+        env:
+          CGO_ENABLED: 0
