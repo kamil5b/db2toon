@@ -40,20 +40,43 @@ func TestExtractSchemaToolAgainstPostgres(t *testing.T) {
 		t.Fatalf("create fixture: %v", err)
 	}
 
-	request, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]any{"name": "db2toon.extract_schema", "arguments": map[string]any{
-			"dialect": "postgres", "db": dsn,
-		}},
-	})
-	if err != nil {
-		t.Fatalf("encode request: %v", err)
+	profiles := []struct {
+		name         string
+		capabilities map[string]any
+	}{
+		{name: "claude", capabilities: map[string]any{"tools": map[string]any{}}},
+		{name: "cursor", capabilities: map[string]any{"roots": map[string]any{"listChanged": true}, "tools": map[string]any{}}},
+		{name: "mcp-inspector", capabilities: map[string]any{}},
 	}
-	var output bytes.Buffer
-	if err := NewServer(bytes.NewReader(append(request, '\n')), &output).Serve(ctx); err != nil {
-		t.Fatalf("invoke tool: %v", err)
-	}
-	if !strings.Contains(output.String(), "[tool_users]") || strings.Contains(output.String(), `"isError":true`) {
-		t.Fatalf("unexpected tool output: %s", output.String())
+	for _, profile := range profiles {
+		t.Run(profile.name, func(t *testing.T) {
+			requests := []map[string]any{
+				{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+					"protocolVersion": "2024-11-05", "capabilities": profile.capabilities, "clientInfo": map[string]any{"name": profile.name, "version": "test"},
+				}},
+				{"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+				{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+					"params": map[string]any{"name": "db2toon.extract_schema", "arguments": map[string]any{
+						"dialect": "postgres", "db": dsn,
+					}},
+				},
+			}
+			var input bytes.Buffer
+			for _, request := range requests {
+				encoded, err := json.Marshal(request)
+				if err != nil {
+					t.Fatalf("encode request: %v", err)
+				}
+				input.Write(encoded)
+				input.WriteByte('\n')
+			}
+			var output bytes.Buffer
+			if err := NewServer(&input, &output).Serve(ctx); err != nil {
+				t.Fatalf("invoke tool: %v", err)
+			}
+			if !strings.Contains(output.String(), `"protocolVersion":"2024-11-05"`) || !strings.Contains(output.String(), "db2toon.extract_schema") || !strings.Contains(output.String(), "[tool_users]") || strings.Contains(output.String(), `"isError":true`) {
+				t.Fatalf("unexpected tool output: %s", output.String())
+			}
+		})
 	}
 }

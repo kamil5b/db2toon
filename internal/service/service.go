@@ -27,7 +27,6 @@ type Request struct {
 type Options struct {
 	Schemas              []string `json:"schemas,omitempty"`
 	IncludeViews         bool     `json:"include_views,omitempty"`
-	IncludeSystem        bool     `json:"include_system,omitempty"`
 	IncludePartitioned   bool     `json:"include_partitioned,omitempty"`
 	ExampleSample        int      `json:"example_sample,omitempty"`
 	ExampleSampleOrdered bool     `json:"example_sample_ordered,omitempty"`
@@ -56,8 +55,9 @@ func CapabilitiesFor(dialect string) (Capabilities, bool) {
 }
 
 type Error struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -65,32 +65,29 @@ func (e *Error) Error() string { return e.Message }
 func Extract(ctx context.Context, req Request) (string, *Error) {
 	dialect := strings.ToLower(strings.TrimSpace(req.Dialect))
 	if dialect == "" {
-		return "", &Error{"invalid_options", "dialect is required"}
+		return "", &Error{"INVALID_ARGUMENT", "dialect is required", false}
 	}
 	if req.DB == "" {
-		return "", &Error{"invalid_options", "db is required"}
+		return "", &Error{"INVALID_ARGUMENT", "db is required", false}
 	}
 	if _, ok := CapabilitiesFor(dialect); !ok {
-		return "", &Error{"unsupported_dialect", fmt.Sprintf("unsupported database dialect %q", dialect)}
+		return "", &Error{"UNSUPPORTED_DIALECT", fmt.Sprintf("unsupported database dialect %q", dialect), false}
 	}
 	if req.Options.ExampleSample < 0 {
-		return "", &Error{"invalid_options", "example_sample must not be negative"}
-	}
-	if req.Options.IncludeSystem {
-		return "", &Error{"invalid_options", "include_system is not supported by the postgres adapter"}
+		return "", &Error{"INVALID_ARGUMENT", "example_sample must not be negative", false}
 	}
 	timeout := DefaultTimeout
 	if req.Options.Timeout != "" {
 		parsed, err := time.ParseDuration(req.Options.Timeout)
 		if err != nil || parsed <= 0 {
-			return "", &Error{"invalid_options", "timeout must be a positive duration"}
+			return "", &Error{"INVALID_ARGUMENT", "timeout must be a positive duration", false}
 		}
 		timeout = parsed
 	}
 	limit := MaxOutputBytes
 	if req.Options.MaxOutputBytes != 0 {
-		if req.Options.MaxOutputBytes <= 0 || req.Options.MaxOutputBytes > MaxOutputBytes {
-			return "", &Error{"invalid_options", fmt.Sprintf("max_output_bytes must be between 1 and %d", MaxOutputBytes)}
+		if req.Options.MaxOutputBytes < 1024 || req.Options.MaxOutputBytes > MaxOutputBytes {
+			return "", &Error{"INVALID_ARGUMENT", fmt.Sprintf("max_output_bytes must be between 1024 and %d", MaxOutputBytes), false}
 		}
 		limit = req.Options.MaxOutputBytes
 	}
@@ -99,28 +96,28 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 	defer cancel()
 	extractor, err := postgres.New(ctx, req.DB)
 	if err != nil {
-		return "", &Error{"adapter_failure", "unable to connect to the database"}
+		return "", &Error{"CONNECTION_FAILED", "unable to connect to the database", true}
 	}
 	defer extractor.Close(context.Background())
 	db, err := extractor.Extract(ctx, database.ExtractOptions{
 		Schemas: req.Options.Schemas, IncludeViews: req.Options.IncludeViews,
-		IncludeSystem: req.Options.IncludeSystem, IncludePartitioned: req.Options.IncludePartitioned,
-		ExampleSample: req.Options.ExampleSample, ExampleSampleOrdered: req.Options.ExampleSampleOrdered,
+		IncludePartitioned: req.Options.IncludePartitioned,
+		ExampleSample:      req.Options.ExampleSample, ExampleSampleOrdered: req.Options.ExampleSampleOrdered,
 		ExcludeTables: req.Options.ExcludeTables, ExcludeExampleTables: req.Options.ExcludeExampleTables,
 		ExcludeExampleFields: req.Options.ExcludeExampleFields, Seed: req.Options.Seed,
 	})
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", &Error{"timeout", "schema extraction timed out"}
+			return "", &Error{"TIMEOUT", "schema extraction timed out", true}
 		}
-		return "", &Error{"adapter_failure", "schema extraction failed"}
+		return "", &Error{"EXTRACTION_FAILED", "schema extraction failed", true}
 	}
 	var output bytes.Buffer
 	if err := toon.Encode(&output, db); err != nil {
-		return "", &Error{"encoding_failure", "unable to encode schema"}
+		return "", &Error{"INTERNAL_ERROR", "unable to encode schema", false}
 	}
 	if output.Len() > limit {
-		return "", &Error{"output_limit", fmt.Sprintf("TOON output exceeds the %d-byte limit", limit)}
+		return "", &Error{"OUTPUT_TOO_LARGE", fmt.Sprintf("TOON output exceeds the %d-byte limit", limit), false}
 	}
 	return output.String(), nil
 }

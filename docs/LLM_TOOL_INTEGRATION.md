@@ -67,6 +67,10 @@ Schema discovery is read-only. The default operation timeout is 30 seconds,
 and the maximum response size is 4 MiB. Callers can choose lower limits.
 Unsupported options and adapter failures return structured errors. Connection
 strings and credentials are not included in error messages or tool results.
+Tool arguments reject unknown properties. Stable error codes include
+`INVALID_ARGUMENT`, `UNSUPPORTED_DIALECT`, `CONNECTION_FAILED`, `TIMEOUT`,
+`OUTPUT_TOO_LARGE`, and `INTERNAL_ERROR`; retryable failures are marked with a
+`retryable` field.
 
 The MCP server currently supports PostgreSQL only. Additional database
 adapters should be added to the shared service and capability model before
