@@ -477,7 +477,8 @@ testing remains a release-validation task.
 
 ## Packaging Strategy
 
-The official MCP Registry stores metadata, not binary artifacts. `db2toon-mcp` must be distributed through another package or artifact channel.
+The official MCP Registry stores metadata, not binary artifacts. `db2toon-mcp`
+is distributed as a public multi-platform OCI image on GHCR.
 
 ### Preferred initial distribution
 
@@ -507,18 +508,13 @@ Also publish:
 - provenance or signatures when practical;
 - an SBOM when practical.
 
-### Registry packaging decision
+### Registry packaging
 
-Before publication, confirm which current Registry package type best supports a Go native binary.
-
-Possible paths:
-
-1. Publish a small npm launcher package that downloads or invokes the correct native binary.
-2. Publish through another package type supported by the current Registry schema.
-3. Add a remote Streamable HTTP server, which is not preferred for local database access.
-4. Wait for direct GitHub Release or native-binary package support if not currently available.
-
-Do not invent a `server.json` package type. Generate the file with the current `mcp-publisher init` and validate it against the current schema.
+The release workflow builds and pushes `ghcr.io/kamil5b/db2toon` as a
+multi-platform OCI image. The image contains the
+`io.modelcontextprotocol.server.name` ownership label required by the
+registry. The workflow updates `server.json` with the release tag before
+publishing it through GitHub OIDC.
 
 ---
 
@@ -531,7 +527,7 @@ The Registry is currently in preview. Its schemas, CLI behavior, and data may ch
 Using GitHub authentication:
 
 ```text
-io.github.kamil5b/db2toon
+io.github.kamil5b/db2toon-mcp
 ```
 
 This name must remain stable after publication.
@@ -553,7 +549,7 @@ Illustrative example only:
 ```json
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kamil5b/db2toon",
+  "name": "io.github.kamil5b/db2toon-mcp",
   "description": "Read-only database schema extraction to compact TOON for LLM tools.",
   "repository": {
     "url": "https://github.com/kamil5b/db2toon",
@@ -562,8 +558,8 @@ Illustrative example only:
   "version": "0.1.0",
   "packages": [
     {
-      "registryType": "<supported-package-type>",
-      "identifier": "<published-package-identifier>",
+      "registryType": "oci",
+      "identifier": "ghcr.io/kamil5b/db2toon:v0.0.0",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"
@@ -601,7 +597,7 @@ and use the schema produced by the installed publisher version.
    - description length;
    - package verification metadata.
 
-6. Authenticate using GitHub:
+6. Authenticate using GitHub OIDC in Actions, or GitHub login locally:
 
    ```bash
    mcp-publisher login github
@@ -616,7 +612,7 @@ and use the schema produced by the installed publisher version.
 8. Verify through the Registry search API:
 
    ```bash
-   curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.kamil5b/db2toon"
+   curl "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.kamil5b/db2toon-mcp"
    ```
 
 9. Test installation from at least one registry-aware MCP client or downstream registry.
@@ -767,12 +763,12 @@ It could report supported dialects and options without opening a database connec
 
 ### Milestone 4: Registry packaging
 
-- [ ] Confirm current Registry-supported package types.
-- [ ] Select the package strategy for Go binaries.
-- [ ] Publish the installable package.
+- [x] Confirm current Registry-supported package types.
+- [x] Select the OCI/GHCR package strategy for Go binaries.
+- [x] Publish the installable package.
 - [ ] Add package verification metadata.
 - [ ] Generate `server.json` using `mcp-publisher init`.
-- [ ] Validate registry identity `io.github.kamil5b/db2toon`.
+- [ ] Validate registry identity `io.github.kamil5b/db2toon-mcp`.
 
 ### Milestone 5: Registry publication
 
