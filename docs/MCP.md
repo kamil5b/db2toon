@@ -560,7 +560,6 @@ Illustrative example only:
     {
       "registryType": "oci",
       "identifier": "ghcr.io/kamil5b/db2toon:v0.0.0",
-      "version": "0.1.0",
       "transport": {
         "type": "stdio"
       }

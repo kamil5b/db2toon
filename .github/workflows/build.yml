@@ -151,8 +151,7 @@ jobs:
                     --arg identifier "${IMAGE}:${TAG}" \
                     '.version = $version
                      | .packages[0].registryType = "oci"
-                     | .packages[0].identifier = $identifier
-                     | .packages[0].version = $version' \
+                     | .packages[0].identifier = $identifier' \
                     server.json > server.tmp.json
                   mv server.tmp.json server.json
                   cat server.json
