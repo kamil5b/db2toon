@@ -31,3 +31,11 @@ func TestSelectedSchemas(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitCommaSeparated(t *testing.T) {
+	got := splitCommaSeparated(" users, public.posts, ,audit.logs ")
+	want := []string{"users", "public.posts", "audit.logs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("splitCommaSeparated() = %#v, want %#v", got, want)
+	}
+}

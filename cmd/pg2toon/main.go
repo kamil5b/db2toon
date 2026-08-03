@@ -30,6 +30,9 @@ func run(args []string, stdout io.Writer) error {
 	schemaName := flags.String("schema", "", "schema to extract (default public)")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
 	includePartitioned := flags.Bool("include-partitioned", false, "include partitioned tables")
+	excludeTables := flags.String("exclude-tables", "", "comma-separated tables to exclude")
+	excludeExampleTables := flags.String("exclude-example-tables", "", "comma-separated tables to exclude from examples")
+	excludeExampleFields := flags.String("exclude-example-field", "", "comma-separated fields to exclude from examples")
 	exampleSample := flags.Int("example-sample", 0, "number of sample rows to include per table")
 	exampleSampleOrdered := flags.Bool("example-sample-ordered", false, "order sample rows deterministically")
 	seed := flags.Int64("seed", 0, "seed for reproducible sample selection")
@@ -63,9 +66,14 @@ func run(args []string, stdout io.Writer) error {
 	defer extractor.Close(context.Background())
 
 	db, err := extractor.Extract(ctx, database.ExtractOptions{
-		Schemas: schemas, IncludePartitioned: *includePartitioned,
-		ExampleSample: *exampleSample, ExampleSampleOrdered: *exampleSampleOrdered,
-		Seed: *seed,
+		Schemas:              schemas,
+		IncludePartitioned:   *includePartitioned,
+		ExcludeTables:        splitCommaSeparated(*excludeTables),
+		ExcludeExampleTables: splitCommaSeparated(*excludeExampleTables),
+		ExcludeExampleFields: splitCommaSeparated(*excludeExampleFields),
+		ExampleSample:        *exampleSample,
+		ExampleSampleOrdered: *exampleSampleOrdered,
+		Seed:                 *seed,
 	})
 	if err != nil {
 		return fmt.Errorf("schema extraction failed: %w", err)
@@ -95,6 +103,10 @@ func run(args []string, stdout io.Writer) error {
 }
 
 func splitSchemas(value string) []string {
+	return splitCommaSeparated(value)
+}
+
+func splitCommaSeparated(value string) []string {
 	var result []string
 	for _, name := range strings.Split(value, ",") {
 		if name = strings.TrimSpace(name); name != "" {

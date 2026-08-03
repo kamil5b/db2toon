@@ -13,6 +13,9 @@ type ExtractOptions struct {
 	IncludePartitioned   bool
 	ExampleSample        int
 	ExampleSampleOrdered bool
+	ExcludeTables        []string
+	ExcludeExampleTables []string
+	ExcludeExampleFields []string
 	Seed                 int64
 }
 

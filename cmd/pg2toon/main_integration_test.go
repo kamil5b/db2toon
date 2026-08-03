@@ -344,9 +344,59 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if len(vectorDocuments.Indexes) != 1 || vectorDocuments.Indexes[0].Method != "hnsw" {
 		t.Fatalf("vector HNSW index: %#v", vectorDocuments.Indexes)
 	}
+	withoutVectorExamples, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:              []string{"public"},
+		ExampleSample:        2,
+		ExampleSampleOrdered: true,
+		ExcludeExampleTables: []string{"vector_documents"},
+	})
+	if err != nil {
+		t.Fatalf("extract schema without vector examples: %v", err)
+	}
+	if findTable(t, withoutVectorExamples.Schemas[0].Tables, "vector_documents").Example != nil {
+		t.Fatal("vector_documents should not have examples")
+	}
+	withoutJSONDocuments, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:       []string{"public"},
+		ExcludeTables: []string{"json_documents"},
+	})
+	if err != nil {
+		t.Fatalf("extract schema without json documents: %v", err)
+	}
+	if len(withoutJSONDocuments.Schemas[0].Tables) != 10 {
+		t.Fatalf("excluded table count = %d, want 10", len(withoutJSONDocuments.Schemas[0].Tables))
+	}
+	if hasTable(withoutJSONDocuments.Schemas[0].Tables, "json_documents") {
+		t.Fatal("json_documents should be excluded")
+	}
+	withoutUserEmailExamples, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:              []string{"public"},
+		ExampleSample:        2,
+		ExampleSampleOrdered: true,
+		ExcludeExampleFields: []string{"public.users.email"},
+	})
+	if err != nil {
+		t.Fatalf("extract schema without user email examples: %v", err)
+	}
+	userEmailExcluded := findTable(t, withoutUserEmailExamples.Schemas[0].Tables, "users")
+	if userEmailExcluded.Example == nil || strings.Join(userEmailExcluded.Example.Columns, ",") != "id,display_name" {
+		t.Fatalf("example columns after field exclusion = %q", strings.Join(userEmailExcluded.Example.Columns, ","))
+	}
+	if len(userEmailExcluded.Columns) != 3 {
+		t.Fatalf("schema columns changed after field exclusion: %#v", userEmailExcluded.Columns)
+	}
 	if posts.ForeignKeys[0].LocalColumns[0] != "author_id" || posts.ForeignKeys[0].ReferencedColumns[0] != "id" {
 		t.Fatalf("foreign key columns: %#v", posts.ForeignKeys[0])
 	}
+}
+
+func hasTable(tables []schema.Table, name string) bool {
+	for _, table := range tables {
+		if table.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func findTable(t *testing.T, tables []schema.Table, name string) schema.Table {

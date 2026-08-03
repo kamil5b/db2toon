@@ -59,6 +59,9 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 		if err := rows.Scan(&table.Schema, &table.Name, &table.Comment); err != nil {
 			return nil, fmt.Errorf("scan table: %w", err)
 		}
+		if excludedTable(table, opts.ExcludeTables) {
+			continue
+		}
 		tables = append(tables, table)
 	}
 	if err := rows.Err(); err != nil {
@@ -111,10 +114,29 @@ func (e *Extractor) populateTable(ctx context.Context, table *schema.Table, opts
 	if err := e.loadIndexes(ctx, table); err != nil {
 		return err
 	}
-	if opts.ExampleSample > 0 {
+	if opts.ExampleSample > 0 && !excludedTable(*table, opts.ExcludeExampleTables) {
 		return e.loadExample(ctx, table, opts)
 	}
 	return nil
+}
+
+func excludedTable(table schema.Table, exclusions []string) bool {
+	for _, exclusion := range exclusions {
+		if exclusion == table.Name || exclusion == table.Schema+"."+table.Name {
+			return true
+		}
+	}
+	return false
+}
+
+func excludedExampleField(tableSchema, tableName, fieldName string, exclusions []string) bool {
+	qualifiedField := tableSchema + "." + tableName + "." + fieldName
+	for _, exclusion := range exclusions {
+		if exclusion == qualifiedField || exclusion == tableName+"."+fieldName {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Extractor) loadExample(ctx context.Context, table *schema.Table, opts database.ExtractOptions) error {
@@ -149,9 +171,17 @@ func (e *Extractor) loadExample(ctx context.Context, table *schema.Table, opts d
 		Columns:     make([]string, 0, len(table.Columns)),
 		ColumnTypes: make([]string, 0, len(table.Columns)),
 	}
-	for _, column := range table.Columns {
+	indices := make([]int, 0, len(table.Columns))
+	for i, column := range table.Columns {
+		if excludedExampleField(table.Schema, table.Name, column.Name, opts.ExcludeExampleFields) {
+			continue
+		}
+		indices = append(indices, i)
 		example.Columns = append(example.Columns, column.Name)
 		example.ColumnTypes = append(example.ColumnTypes, column.NativeType)
+	}
+	if len(indices) == 0 {
+		return nil
 	}
 	for rows.Next() {
 		values := make([]any, len(table.Columns))
@@ -162,7 +192,11 @@ func (e *Extractor) loadExample(ctx context.Context, table *schema.Table, opts d
 		if err := rows.Scan(pointers...); err != nil {
 			return fmt.Errorf("scan examples for %s.%s: %w", table.Schema, table.Name, err)
 		}
-		example.Rows = append(example.Rows, values)
+		row := make([]any, 0, len(indices))
+		for _, index := range indices {
+			row = append(row, values[index])
+		}
+		example.Rows = append(example.Rows, row)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate examples for %s.%s: %w", table.Schema, table.Name, err)
