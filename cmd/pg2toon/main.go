@@ -30,6 +30,9 @@ func run(args []string, stdout io.Writer) error {
 	schemaName := flags.String("schema", "", "schema to extract (default public)")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
 	includePartitioned := flags.Bool("include-partitioned", false, "include partitioned tables")
+	exampleSample := flags.Int("example-sample", 0, "number of sample rows to include per table")
+	exampleSampleOrdered := flags.Bool("example-sample-ordered", false, "order sample rows deterministically")
+	seed := flags.Int64("seed", 0, "seed for reproducible sample selection")
 	timeout := flags.Duration("timeout", 30*time.Second, "connection and extraction timeout")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -39,6 +42,9 @@ func run(args []string, stdout io.Writer) error {
 	}
 	if *timeout <= 0 {
 		return fmt.Errorf("timeout must be greater than zero")
+	}
+	if *exampleSample < 0 {
+		return fmt.Errorf("example-sample must not be negative")
 	}
 	schemas, err := selectedSchemas(*schemaName, *schemaNames)
 	if err != nil {
@@ -58,6 +64,8 @@ func run(args []string, stdout io.Writer) error {
 
 	db, err := extractor.Extract(ctx, database.ExtractOptions{
 		Schemas: schemas, IncludePartitioned: *includePartitioned,
+		ExampleSample: *exampleSample, ExampleSampleOrdered: *exampleSampleOrdered,
+		Seed: *seed,
 	})
 	if err != nil {
 		return fmt.Errorf("schema extraction failed: %w", err)

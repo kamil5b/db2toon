@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/kamil5b/pgschema2toon/internal/database"
 	pgadapter "github.com/kamil5b/pgschema2toon/internal/database/postgres"
 	"github.com/kamil5b/pgschema2toon/pkg/schema"
+	"github.com/kamil5b/pgschema2toon/pkg/toon"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
@@ -68,6 +70,13 @@ CREATE TABLE posts (
     published_at timestamp with time zone
 );
 CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
+
+INSERT INTO users (email, display_name) VALUES
+    ('alice@example.com', 'Alice'),
+    ('bob@example.com', 'Bob');
+INSERT INTO posts (author_id, title) VALUES
+    (1, 'Alice post'),
+    (2, 'Bob post');
 `
 	if _, err := conn.Exec(ctx, fixture); err != nil {
 		t.Fatalf("create schema fixture: %v", err)
@@ -78,7 +87,12 @@ CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
 		t.Fatalf("create extractor: %v", err)
 	}
 	t.Cleanup(func() { _ = extractor.Close(context.Background()) })
-	db, err := extractor.Extract(ctx, database.ExtractOptions{Schemas: []string{"public"}})
+	db, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:              []string{"public"},
+		ExampleSample:        2,
+		ExampleSampleOrdered: true,
+		Seed:                 42,
+	})
 	if err != nil {
 		t.Fatalf("extract schema: %v", err)
 	}
@@ -194,6 +208,30 @@ CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
 	}
 	if len(users.Columns) != 3 {
 		t.Fatalf("users columns: %#v", users.Columns)
+	}
+	if users.Example == nil || len(users.Example.Rows) != 2 {
+		t.Fatalf("users examples: %#v", users.Example)
+	}
+	if got := strings.Join(users.Example.Columns, ","); got != "id,email,display_name" {
+		t.Fatalf("users example columns = %q", got)
+	}
+	if got := users.Example.Rows[0][1]; got != "alice@example.com" {
+		t.Fatalf("first user example email = %#v", got)
+	}
+	if got := users.Example.Rows[1][1]; got != "bob@example.com" {
+		t.Fatalf("second user example email = %#v", got)
+	}
+	if posts.Example == nil || len(posts.Example.Rows) != 2 {
+		t.Fatalf("posts examples: %#v", posts.Example)
+	}
+
+	var output bytes.Buffer
+	if err := toon.Encode(&output, db); err != nil {
+		t.Fatalf("encode examples: %v", err)
+	}
+	toonOutput := output.String()
+	if !strings.Contains(toonOutput, "@example[2]{id,email,display_name}:\n  1,alice@example.com,Alice\n  2,bob@example.com,Bob") {
+		t.Fatalf("users examples missing from TOON output:\n%s", toonOutput)
 	}
 	if posts.ForeignKeys[0].LocalColumns[0] != "author_id" || posts.ForeignKeys[0].ReferencedColumns[0] != "id" {
 		t.Fatalf("foreign key columns: %#v", posts.ForeignKeys[0])

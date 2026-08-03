@@ -7,10 +7,13 @@ import (
 )
 
 type ExtractOptions struct {
-	Schemas            []string
-	IncludeViews       bool
-	IncludeSystem      bool
-	IncludePartitioned bool
+	Schemas              []string
+	IncludeViews         bool
+	IncludeSystem        bool
+	IncludePartitioned   bool
+	ExampleSample        int
+	ExampleSampleOrdered bool
+	Seed                 int64
 }
 
 type Extractor interface {

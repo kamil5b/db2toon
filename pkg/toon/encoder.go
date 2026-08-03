@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kamil5b/pgschema2toon/pkg/schema"
 )
@@ -165,7 +167,43 @@ func (e encoder) table(namespace string, table schema.Table) error {
 			}
 		}
 	}
+	if table.Example != nil {
+		if err := e.printf("@example[%d]{%s}:\n", len(table.Example.Rows), identifiers(table.Example.Columns)); err != nil {
+			return err
+		}
+		for _, row := range table.Example.Rows {
+			values := make([]string, len(row))
+			for i, value := range row {
+				values[i] = exampleValue(value)
+			}
+			if err := e.printf("  %s\n", strings.Join(values, ",")); err != nil {
+				return err
+			}
+		}
+	}
 	return e.printf("\n")
+}
+
+func exampleValue(value any) string {
+	switch value := value.(type) {
+	case nil:
+		return "null"
+	case []byte:
+		return quoteExampleValue(string(value))
+	case time.Time:
+		return quoteExampleValue(value.Format(time.RFC3339Nano))
+	case string:
+		return quoteExampleValue(value)
+	default:
+		return fmt.Sprint(value)
+	}
+}
+
+func quoteExampleValue(value string) string {
+	if value != "null" && value != "" && !strings.ContainsAny(value, ",{}[]:\"\r\n\t ") {
+		return value
+	}
+	return strconv.Quote(value)
 }
 
 func (e encoder) actions(fk schema.ForeignKey) error {
@@ -227,11 +265,13 @@ func generatedName(value string) string {
 	}
 	return value
 }
+
 func shrink(value string) string {
 	value = strings.ReplaceAll(value, "character varying", "varchar")
 	value = strings.ReplaceAll(value, "timestamp with time zone", "timestamptz")
 	return strings.TrimSpace(value)
 }
+
 func indexDefinition(index schema.Index) string {
 	if index.Method != "" && len(index.Keys) != 0 {
 		definition := index.Method + " (" + strings.Join(index.Keys, ", ") + ")"

@@ -20,6 +20,14 @@ type Table struct {
 	Checks      []CheckConstraint
 	Exclusions  []ExclusionConstraint
 	Indexes     []Index
+	Example     *Example
+}
+
+// Example contains sampled rows for a table. Values are database values and
+// are rendered by the TOON encoder.
+type Example struct {
+	Columns []string
+	Rows    [][]any
 }
 
 type Column struct {

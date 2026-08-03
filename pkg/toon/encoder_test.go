@@ -53,6 +53,26 @@ func TestEncodePropagatesWriterError(t *testing.T) {
 	}
 }
 
+func TestEncodeExamples(t *testing.T) {
+	db := &schema.Database{Schemas: []schema.Schema{{Tables: []schema.Table{{
+		Name:    "users",
+		Columns: []schema.Column{{Name: "id", NativeType: "int", Nullable: true}, {Name: "name", NativeType: "text", Nullable: true}, {Name: "note", NativeType: "text", Nullable: true}},
+		Example: &schema.Example{
+			Columns: []string{"id", "name", "note"},
+			Rows:    [][]any{{int64(1), "Alice", nil}, {int64(2), "Bob", "has, comma"}},
+		},
+	}}}}}
+
+	var got bytes.Buffer
+	if err := Encode(&got, db); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	want := "[users]\n  id int\n  name text\n  note text\n@example[2]{id,name,note}:\n  1,Alice,null\n  2,Bob,\"has, comma\"\n\n"
+	if got.String() != want {
+		t.Fatalf("unexpected output\n--- got ---\n%s--- want ---\n%s", got.String(), want)
+	}
+}
+
 func TestEncodeRejectsNil(t *testing.T) {
 	if err := Encode(&bytes.Buffer{}, nil); err == nil {
 		t.Fatal("expected nil database error")

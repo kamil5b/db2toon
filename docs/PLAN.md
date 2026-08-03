@@ -144,7 +144,7 @@ Important rules:
 - Add the `-example-sample-ordered=true` flag, defaulting to `false`.
 - Add the `-seed=n` flag, defaulting to `0`, to control pseudo-random sample selection.
 - When `-example-sample` is greater than zero, add an `@example` section to each table in the `.toon` output containing up to `n` rows sampled from that table.
-- When `-example-sample-ordered=true`, select example rows using a deterministic ordering; otherwise, allow the database to choose the sample rows.
+- When `-example-sample-ordered=true`, select example rows using a deterministic ordering; otherwise, select rows randomly.
 - When a non-zero `-seed` is provided, repeated runs against the same data produce the same sample rows.
 - When `-example-sample=0`, do not add `@example` sections.
 

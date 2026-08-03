@@ -3,6 +3,8 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/kamil5b/pgschema2toon/internal/database"
@@ -68,7 +70,7 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 	order := make([]string, 0, len(schemas))
 	for i := range tables {
 		table := &tables[i]
-		if err := e.populateTable(ctx, table); err != nil {
+		if err := e.populateTable(ctx, table, opts); err != nil {
 			return nil, err
 		}
 		s, ok := bySchema[table.Schema]
@@ -87,7 +89,7 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 	return db, nil
 }
 
-func (e *Extractor) populateTable(ctx context.Context, table *schema.Table) error {
+func (e *Extractor) populateTable(ctx context.Context, table *schema.Table, opts database.ExtractOptions) error {
 	if err := e.loadColumns(ctx, table); err != nil {
 		return err
 	}
@@ -106,7 +108,63 @@ func (e *Extractor) populateTable(ctx context.Context, table *schema.Table) erro
 	if err := e.loadExclusions(ctx, table); err != nil {
 		return err
 	}
-	return e.loadIndexes(ctx, table)
+	if err := e.loadIndexes(ctx, table); err != nil {
+		return err
+	}
+	if opts.ExampleSample > 0 {
+		return e.loadExample(ctx, table, opts)
+	}
+	return nil
+}
+
+func (e *Extractor) loadExample(ctx context.Context, table *schema.Table, opts database.ExtractOptions) error {
+	if len(table.Columns) == 0 {
+		return nil
+	}
+
+	qualifiedTable := pgx.Identifier{table.Schema, table.Name}.Sanitize()
+	query := "SELECT t.* FROM " + qualifiedTable + " AS t"
+	args := []any{opts.ExampleSample}
+	if opts.ExampleSampleOrdered {
+		columns := make([]string, 0, len(table.Columns))
+		for _, column := range table.Columns {
+			columns = append(columns, pgx.Identifier{column.Name}.Sanitize())
+		}
+		query += " ORDER BY " + strings.Join(columns, ", ")
+	} else if opts.Seed != 0 {
+		query += " ORDER BY md5(row_to_json(t)::text || $2)"
+		args = append(args, strconv.FormatInt(opts.Seed, 10))
+	} else {
+		query += " ORDER BY random()"
+	}
+	query += " LIMIT $1"
+
+	rows, err := e.conn.Query(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("query examples for %s.%s: %w", table.Schema, table.Name, err)
+	}
+	defer rows.Close()
+
+	example := &schema.Example{Columns: make([]string, 0, len(table.Columns))}
+	for _, column := range table.Columns {
+		example.Columns = append(example.Columns, column.Name)
+	}
+	for rows.Next() {
+		values := make([]any, len(table.Columns))
+		pointers := make([]any, len(values))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			return fmt.Errorf("scan examples for %s.%s: %w", table.Schema, table.Name, err)
+		}
+		example.Rows = append(example.Rows, values)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate examples for %s.%s: %w", table.Schema, table.Name, err)
+	}
+	table.Example = example
+	return nil
 }
 
 func (e *Extractor) loadColumns(ctx context.Context, table *schema.Table) error {

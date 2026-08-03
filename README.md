@@ -43,6 +43,16 @@ Download pre-built binaries from the [releases page](https://github.com/kamil5b/
 ./pg2toon -db "postgresql://user:password@localhost/dbname" -out schema.toon
 ```
 
+Include up to two sample rows per table in the TOON output, using a stable
+ordering and a reproducible sample seed:
+
+```bash
+./pg2toon -db "postgresql://user:password@localhost/dbname" \
+  -example-sample=2 -example-sample-ordered=true -seed=42
+```
+
+The default `-example-sample=0` omits `@example` sections.
+
 Select multiple schemas, include partitioned tables, and change the default
 30-second operation timeout with:
 
@@ -58,6 +68,9 @@ Select multiple schemas, include partitioned tables, and change the default
 - `-schema string`: A single schema to extract (defaults to `public`)
 - `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`
 - `-include-partitioned`: Include PostgreSQL partitioned tables
+- `-example-sample int`: Number of sample rows to include per table (defaults to `0`)
+- `-example-sample-ordered`: Select sample rows using deterministic ordering (defaults to `false`)
+- `-seed int`: Seed for reproducible sample selection (defaults to `0`)
 - `-timeout duration`: Connection and extraction timeout (defaults to `30s`)
 
 ## Output Format
@@ -75,6 +88,10 @@ The Toon format provides a clean, human-readable schema definition:
 
 @indices
   idx_email: ON users USING btree (email)
+
+@example[2]{id,email,name,created_at}:
+  1,alice@example.com,Alice,2026-01-10T09:00:00Z
+  2,bob@example.com,Bob,2026-01-11T10:30:00Z
 
 [posts]
 # Blog posts
@@ -105,6 +122,7 @@ The Toon format provides a clean, human-readable schema definition:
   - Multiple tags: `{pk,req}`
 - `-> table(column)`: Foreign key reference (inline for single columns)
 - `@indices`: Section for database indexes
+- `@example[n]{columns}:`: Up to `n` sampled rows from the table
 - `// comment`: Inline column comment
 
 ## Requirements
