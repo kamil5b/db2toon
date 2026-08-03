@@ -10,7 +10,28 @@ permissions:
     contents: write
 
 jobs:
+    test:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+                  cache: true
+
+            - name: Unit tests
+              env:
+                  CGO_ENABLED: 0
+              run: go test ./...
+
+            - name: Integration tests
+              env:
+                  CGO_ENABLED: 0
+              run: go test -tags=integration ./internal/database/postgres ./internal/mcp
+
     build:
+        needs: test
         runs-on: ubuntu-latest
         strategy:
             matrix:
@@ -51,6 +72,7 @@ jobs:
                     go build -o "dist/${binary_name}" "./cmd/${command}"
                     final_name="${{ matrix.goarch }}-${{ matrix.goos }}-${binary_name}"
                     mv "dist/${binary_name}" "dist/${final_name}"
+                    sha256sum "dist/${final_name}" > "dist/${final_name}.sha256"
                   done
 
             - name: Upload to Release
