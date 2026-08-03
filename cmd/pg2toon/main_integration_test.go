@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestPostgresSchemaToToon(t *testing.T) {
 
 	container, err := postgres.Run(
 		ctx,
-		"postgres:16-alpine",
+		"pgvector/pgvector:pg16",
 		postgres.WithDatabase("schema_test"),
 		postgres.WithUsername("schema_test"),
 		postgres.WithPassword("schema_test"),
@@ -55,6 +56,8 @@ func TestPostgresSchemaToToon(t *testing.T) {
 	})
 
 	const fixture = `
+CREATE EXTENSION vector;
+
 CREATE TABLE users (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     email character varying(255) NOT NULL UNIQUE,
@@ -66,10 +69,13 @@ COMMENT ON COLUMN users.email IS 'Login email';
 CREATE TABLE posts (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     author_id bigint NOT NULL REFERENCES users(id),
+    reviewer_id bigint REFERENCES users(id) ON DELETE SET NULL,
     title character varying(200) NOT NULL,
-    published_at timestamp with time zone
+    published_at timestamp with time zone,
+    CONSTRAINT posts_title_check CHECK (length(title) > 0)
 );
 CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
+CREATE INDEX posts_title_partial_idx ON posts USING btree (lower(title)) WHERE title <> '';
 
 INSERT INTO users (email, display_name) VALUES
     ('alice@example.com', 'Alice'),
@@ -77,6 +83,69 @@ INSERT INTO users (email, display_name) VALUES
 INSERT INTO posts (author_id, title) VALUES
     (1, 'Alice post'),
     (2, 'Bob post');
+
+CREATE TABLE tenants (
+    id bigint PRIMARY KEY,
+    name text NOT NULL
+);
+CREATE TABLE tenant_accounts (
+    tenant_id bigint NOT NULL,
+    account_id bigint NOT NULL,
+    name text NOT NULL,
+    PRIMARY KEY (tenant_id, account_id),
+    UNIQUE (tenant_id, name),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON UPDATE CASCADE ON DELETE CASCADE
+);
+CREATE TABLE account_events (
+    tenant_id bigint NOT NULL,
+    account_id bigint NOT NULL,
+    event_id bigint NOT NULL,
+    payload jsonb NOT NULL,
+    PRIMARY KEY (tenant_id, account_id, event_id),
+    FOREIGN KEY (tenant_id, account_id)
+        REFERENCES tenant_accounts(tenant_id, account_id)
+        ON UPDATE CASCADE ON DELETE CASCADE,
+    CONSTRAINT account_events_payload_check CHECK (jsonb_typeof(payload) = 'object')
+);
+CREATE TABLE user_profiles (
+    user_id bigint PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    bio text
+);
+CREATE TABLE tags (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name text NOT NULL UNIQUE
+);
+CREATE TABLE post_tags (
+    post_id bigint NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    tag_id bigint NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (post_id, tag_id)
+);
+CREATE TABLE uuid_documents (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    body jsonb NOT NULL
+);
+CREATE TABLE json_documents (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    body jsonb NOT NULL
+);
+CREATE INDEX json_documents_body_gin_idx ON json_documents USING gin (body);
+CREATE TABLE vector_documents (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    embedding vector(3) NOT NULL
+);
+CREATE INDEX vector_documents_embedding_hnsw_idx
+    ON vector_documents USING hnsw (embedding vector_l2_ops);
+
+INSERT INTO tenants (id, name) VALUES (1, 'Acme');
+INSERT INTO tenant_accounts (tenant_id, account_id, name) VALUES (1, 10, 'Primary');
+INSERT INTO account_events (tenant_id, account_id, event_id, payload)
+VALUES (1, 10, 1, '{"type":"created"}');
+INSERT INTO user_profiles (user_id, bio) VALUES (1, 'Alice profile');
+INSERT INTO tags (name) VALUES ('go'), ('postgres');
+INSERT INTO post_tags (post_id, tag_id) VALUES (1, 1), (1, 2);
+INSERT INTO uuid_documents (body) VALUES ('{"kind":"note"}');
+INSERT INTO json_documents (body) VALUES ('{"kind":"note"}');
+INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 `
 	if _, err := conn.Exec(ctx, fixture); err != nil {
 		t.Fatalf("create schema fixture: %v", err)
@@ -96,7 +165,7 @@ INSERT INTO posts (author_id, title) VALUES
 	if err != nil {
 		t.Fatalf("extract schema: %v", err)
 	}
-	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 2 {
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 11 {
 		t.Fatalf("unexpected database: %#v", db)
 	}
 	posts := findTable(t, db.Schemas[0].Tables, "posts")
@@ -104,10 +173,10 @@ INSERT INTO posts (author_id, title) VALUES
 	if posts.PrimaryKey == nil || strings.Join(posts.PrimaryKey.Columns, ",") != "id" {
 		t.Fatalf("posts primary key: %#v", posts.PrimaryKey)
 	}
-	if len(posts.ForeignKeys) != 1 || posts.ForeignKeys[0].ReferencedTable != "users" {
+	if len(posts.ForeignKeys) != 2 || posts.ForeignKeys[0].ReferencedTable != "users" {
 		t.Fatalf("posts foreign keys: %#v", posts.ForeignKeys)
 	}
-	if len(posts.Indexes) != 1 || posts.Indexes[0].Method != "btree" {
+	if len(posts.Indexes) != 2 || posts.Indexes[0].Method != "btree" {
 		t.Fatalf("posts indexes: %#v", posts.Indexes)
 	}
 	if len(users.Uniques) != 1 {
@@ -116,8 +185,12 @@ INSERT INTO posts (author_id, title) VALUES
 	if users.Columns[0].Identity != "a" {
 		t.Fatalf("users identity: %#v", users.Columns[0])
 	}
-	if db.Schemas[0].Tables[0].Name != "posts" {
-		t.Fatalf("tables are not ordered: %#v", db.Schemas[0].Tables)
+	tableNames := make([]string, 0, len(db.Schemas[0].Tables))
+	for _, table := range db.Schemas[0].Tables {
+		tableNames = append(tableNames, table.Name)
+	}
+	if !sort.StringsAreSorted(tableNames) {
+		t.Fatalf("tables are not ordered: %#v", tableNames)
 	}
 	if users.Comment != "Application users" {
 		t.Fatalf("users comment = %q", users.Comment)
@@ -125,20 +198,23 @@ INSERT INTO posts (author_id, title) VALUES
 	if users.Columns[1].Comment != "Login email" {
 		t.Fatalf("email comment = %q", users.Columns[1].Comment)
 	}
-	if posts.Columns[3].NativeType != "timestamp with time zone" {
-		t.Fatalf("timestamp type = %q", posts.Columns[3].NativeType)
+	if posts.Columns[4].NativeType != "timestamp with time zone" {
+		t.Fatalf("timestamp type = %q", posts.Columns[4].NativeType)
 	}
 	if posts.Columns[1].Nullable {
 		t.Fatal("author_id should be required")
 	}
-	if !posts.Columns[3].Nullable {
+	if !posts.Columns[4].Nullable {
 		t.Fatal("published_at should be nullable")
+	}
+	if !posts.Columns[2].Nullable {
+		t.Fatal("reviewer_id should be nullable")
 	}
 	if posts.ForeignKeys[0].OnDelete != "NO ACTION" {
 		t.Fatalf("delete action = %q", posts.ForeignKeys[0].OnDelete)
 	}
-	if posts.Indexes[0].Keys[0] != "author_id" {
-		t.Fatalf("index keys: %#v", posts.Indexes[0].Keys)
+	if posts.Indexes[0].Keys[0] != "author_id" || posts.Indexes[1].Keys[0] != "lower(title::text)" {
+		t.Fatalf("index keys: %#v", posts.Indexes)
 	}
 	if users.Schema != "public" {
 		t.Fatalf("schema = %q", users.Schema)
@@ -179,7 +255,7 @@ INSERT INTO posts (author_id, title) VALUES
 	if posts.Comment != "" {
 		t.Fatalf("posts comment = %q", posts.Comment)
 	}
-	if len(posts.Checks) != 0 {
+	if len(posts.Checks) != 1 {
 		t.Fatalf("posts checks: %#v", posts.Checks)
 	}
 	if len(posts.Exclusions) != 0 {
@@ -197,13 +273,13 @@ INSERT INTO posts (author_id, title) VALUES
 	if posts.Indexes[0].ConstraintBacked {
 		t.Fatal("posts index should not back a constraint")
 	}
-	if len(db.Schemas[0].Tables) != 2 {
+	if len(db.Schemas[0].Tables) != 11 {
 		t.Fatal("unexpected table count")
 	}
 	if posts.Name != "posts" {
 		t.Fatal("wrong posts table")
 	}
-	if len(posts.Columns) != 4 {
+	if len(posts.Columns) != 5 {
 		t.Fatalf("posts columns: %#v", posts.Columns)
 	}
 	if len(users.Columns) != 3 {
@@ -232,6 +308,40 @@ INSERT INTO posts (author_id, title) VALUES
 	toonOutput := output.String()
 	if !strings.Contains(toonOutput, "@example[2]{id,email,display_name}:\n  1,alice@example.com,Alice\n  2,bob@example.com,Bob") {
 		t.Fatalf("users examples missing from TOON output:\n%s", toonOutput)
+	}
+	accounts := findTable(t, db.Schemas[0].Tables, "tenant_accounts")
+	if accounts.PrimaryKey == nil || strings.Join(accounts.PrimaryKey.Columns, ",") != "tenant_id,account_id" {
+		t.Fatalf("composite primary key: %#v", accounts.PrimaryKey)
+	}
+	events := findTable(t, db.Schemas[0].Tables, "account_events")
+	if len(events.ForeignKeys) != 1 || strings.Join(events.ForeignKeys[0].LocalColumns, ",") != "tenant_id,account_id" {
+		t.Fatalf("composite foreign key: %#v", events.ForeignKeys)
+	}
+	if events.ForeignKeys[0].OnUpdate != "CASCADE" || events.ForeignKeys[0].OnDelete != "CASCADE" {
+		t.Fatalf("composite foreign key actions: %#v", events.ForeignKeys[0])
+	}
+	if len(events.Checks) != 1 {
+		t.Fatalf("event checks: %#v", events.Checks)
+	}
+	profile := findTable(t, db.Schemas[0].Tables, "user_profiles")
+	if len(profile.Uniques) != 0 || len(profile.ForeignKeys) != 1 {
+		t.Fatalf("one-to-one relationship: %#v", profile)
+	}
+	join := findTable(t, db.Schemas[0].Tables, "post_tags")
+	if len(join.ForeignKeys) != 2 || join.PrimaryKey == nil {
+		t.Fatalf("many-to-many join table: %#v", join)
+	}
+	uuidDocuments := findTable(t, db.Schemas[0].Tables, "uuid_documents")
+	if uuidDocuments.Columns[0].Default != "gen_random_uuid()" {
+		t.Fatalf("uuid default: %q", uuidDocuments.Columns[0].Default)
+	}
+	jsonDocuments := findTable(t, db.Schemas[0].Tables, "json_documents")
+	if len(jsonDocuments.Indexes) != 1 || jsonDocuments.Indexes[0].Method != "gin" {
+		t.Fatalf("jsonb GIN index: %#v", jsonDocuments.Indexes)
+	}
+	vectorDocuments := findTable(t, db.Schemas[0].Tables, "vector_documents")
+	if len(vectorDocuments.Indexes) != 1 || vectorDocuments.Indexes[0].Method != "hnsw" {
+		t.Fatalf("vector HNSW index: %#v", vectorDocuments.Indexes)
 	}
 	if posts.ForeignKeys[0].LocalColumns[0] != "author_id" || posts.ForeignKeys[0].ReferencedColumns[0] != "id" {
 		t.Fatalf("foreign key columns: %#v", posts.ForeignKeys[0])
