@@ -70,7 +70,7 @@ Select multiple schemas, include partitioned tables, and change the default
 - `-include-partitioned`: Include PostgreSQL partitioned tables
 - `-exclude-tables string`: Comma-separated tables to exclude entirely; accepts `table` or `schema.table`
 - `-exclude-example-tables string`: Comma-separated tables to exclude from `@example` sampling
-- `-exclude-example-field string`: Comma-separated qualified fields to exclude from examples, such as `public.users.password_hash`
+- `-exclude-example-fields string`: Comma-separated qualified fields to exclude from examples, such as `public.users.password_hash`
 - `-example-sample int`: Number of sample rows to include per table (defaults to `0`)
 - `-example-sample-ordered`: Select sample rows using deterministic ordering (defaults to `false`)
 - `-seed int`: Seed for reproducible sample selection (defaults to `0`)
