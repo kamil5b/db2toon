@@ -23,14 +23,21 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		dialect = strings.ToLower(args[0])
 		args = args[1:]
 	}
-	if dialect != "postgres" {
-		return fmt.Errorf("unsupported database dialect %q (supported: postgres)", dialect)
+	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" && dialect != "mysql" && dialect != "mariadb" && dialect != "cockroachdb" {
+		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb, mysql, mariadb, cockroachdb)", dialect)
 	}
 
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
-	dbURL := flags.String("db", "", "Postgres URL")
+	dbURL := flags.String("db", "", "database URL or local database path")
 	output := flags.String("out", "", "output file (default stdout)")
-	schemaName := flags.String("schema", "", "schema to extract (default public)")
+	defaultSchema := "public"
+	if dialect == "sqlite" || dialect == "duckdb" {
+		defaultSchema = "main"
+	}
+	if dialect == "mysql" || dialect == "mariadb" {
+		defaultSchema = ""
+	}
+	schemaName := flags.String("schema", "", "schema to extract (default "+defaultSchema+")")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
 	includePartitioned := flags.Bool("include-partitioned", false, "include partitioned tables")
 	excludeTables := flags.String("exclude-tables", "", "comma-separated tables to exclude")
@@ -52,7 +59,7 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	if *exampleSample < 0 {
 		return fmt.Errorf("example-sample must not be negative")
 	}
-	schemas, err := selectedSchemas(*schemaName, *schemaNames)
+	schemas, err := selectedSchemasWithDefault(*schemaName, *schemaNames, defaultSchema)
 	if err != nil {
 		return err
 	}
@@ -102,6 +109,10 @@ func splitCommaSeparated(value string) []string {
 }
 
 func selectedSchemas(schemaName, schemaNames string) ([]string, error) {
+	return selectedSchemasWithDefault(schemaName, schemaNames, "public")
+}
+
+func selectedSchemasWithDefault(schemaName, schemaNames, defaultSchema string) ([]string, error) {
 	schemaName = strings.TrimSpace(schemaName)
 	schemas := splitCommaSeparated(schemaNames)
 	if schemaName != "" && len(schemas) != 0 {
@@ -113,5 +124,8 @@ func selectedSchemas(schemaName, schemaNames string) ([]string, error) {
 	if len(schemas) != 0 {
 		return schemas, nil
 	}
-	return []string{"public"}, nil
+	if defaultSchema == "" {
+		return nil, nil
+	}
+	return []string{defaultSchema}, nil
 }

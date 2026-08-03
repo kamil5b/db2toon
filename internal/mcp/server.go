@@ -173,7 +173,7 @@ func toolDefinition() map[string]any {
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false, "required": []string{"dialect", "db"},
 			"properties": map[string]any{
-				"dialect": map[string]any{"type": "string", "enum": []string{"postgres"}, "description": "Database engine. Currently only PostgreSQL is supported."},
+				"dialect": map[string]any{"type": "string", "enum": []string{"postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb"}, "description": "Database engine."},
 				"db":      map[string]any{"type": "string", "minLength": 1, "description": "Database connection URL. Credentials are never returned in tool output or errors."},
 				"options": options,
 			},

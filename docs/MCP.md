@@ -105,8 +105,8 @@ This tool does not execute arbitrary SQL or modify the database.
   "properties": {
     "dialect": {
       "type": "string",
-      "enum": ["postgres"],
-      "description": "Database engine. Currently only PostgreSQL is supported."
+      "enum": ["postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb"],
+      "description": "Database engine."
     },
     "db": {
       "type": "string",
