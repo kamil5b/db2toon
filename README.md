@@ -30,6 +30,36 @@ CGO_ENABLED=0 go build -o output/pg2toon ./cmd/pg2toon
 
 Download pre-built binaries from the [releases page](https://github.com/kamil5b/db2toon/releases) for your platform.
 
+### Go package
+
+The module also exposes a public Go API for callers that want the canonical
+schema model instead of invoking a command:
+
+```go
+import (
+    "context"
+    "os"
+
+    "github.com/kamil5b/db2toon"
+)
+
+func extract() error {
+    db, err := db2toon.Extract(context.Background(), db2toon.Request{
+        Dialect: "postgres",
+        Dump:    "./schema.sql",
+        Options: db2toon.Options{ExampleSample: 2},
+    })
+    if err != nil {
+        return err
+    }
+    return db2toon.Encode(os.Stdout, db)
+}
+```
+
+Set exactly one of `Request.DB` or `Request.Dump`. Dump contents are parsed
+offline and never executed. The public API returns `*schema.Database`, so
+callers may inspect or transform the model before encoding it.
+
 ## Usage
 
 ### LLM tool integration

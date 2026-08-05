@@ -7,16 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
-	"github.com/kamil5b/db2toon/internal/database"
-	"github.com/kamil5b/db2toon/internal/database/cockroachdb"
-	"github.com/kamil5b/db2toon/internal/database/duckdb"
-	"github.com/kamil5b/db2toon/internal/database/mysql"
-	"github.com/kamil5b/db2toon/internal/database/postgres"
-	"github.com/kamil5b/db2toon/internal/database/sqlite"
+	db2toon "github.com/kamil5b/db2toon"
 	"github.com/kamil5b/db2toon/pkg/toon"
 )
 
@@ -96,11 +90,6 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 	if req.Options.ExampleSample < 0 {
 		return "", &Error{"INVALID_ARGUMENT", "example_sample must not be negative", false}
 	}
-	if req.Dump != "" {
-		if info, statErr := os.Stat(req.Dump); statErr != nil || info.IsDir() {
-			return "", &Error{"INVALID_ARGUMENT", "dump file is not readable", false}
-		}
-	}
 	timeout := DefaultTimeout
 	if req.Options.Timeout != "" {
 		parsed, err := time.ParseDuration(req.Options.Timeout)
@@ -119,52 +108,12 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	var extractor database.Extractor
-	var err error
-	switch dialect {
-	case "postgres":
-		if req.Dump != "" {
-			extractor, err = postgres.NewFromDump(ctx, req.Dump)
-		} else {
-			extractor, err = postgres.New(ctx, req.DB)
-		}
-	case "sqlite":
-		if req.Dump != "" {
-			extractor, err = sqlite.NewFromDump(ctx, req.Dump)
-		} else {
-			extractor, err = sqlite.New(ctx, req.DB)
-		}
-	case "duckdb":
-		if req.Dump != "" {
-			extractor, err = duckdb.NewFromDump(ctx, req.Dump)
-		} else {
-			extractor, err = duckdb.New(ctx, req.DB)
-		}
-	case "mysql", "mariadb":
-		if req.Dump != "" {
-			extractor, err = mysql.NewFromDump(ctx, req.Dump)
-		} else {
-			extractor, err = mysql.New(ctx, req.DB)
-		}
-	case "cockroachdb":
-		if req.Dump != "" {
-			extractor, err = cockroachdb.NewFromDump(ctx, req.Dump)
-		} else {
-			extractor, err = cockroachdb.New(ctx, req.DB)
-		}
-	}
-	if err != nil {
-		return "", &Error{"CONNECTION_FAILED", "unable to connect to the database", true}
-	}
-	defer extractor.Close(context.Background())
-	db, err := extractor.Extract(ctx, database.ExtractOptions{
-		Schemas:            req.Options.Schemas,
-		IncludeViews:       req.Options.IncludeViews,
-		IncludePartitioned: req.Options.IncludePartitioned,
-		ExampleSample:      req.Options.ExampleSample, ExampleSampleOrdered: req.Options.ExampleSampleOrdered,
+	db, err := db2toon.Extract(ctx, db2toon.Request{Dialect: dialect, DB: req.DB, Dump: req.Dump, Options: db2toon.Options{
+		Schemas: req.Options.Schemas, IncludeViews: req.Options.IncludeViews, IncludePartitioned: req.Options.IncludePartitioned,
+		ExampleSample: req.Options.ExampleSample, ExampleSampleOrdered: req.Options.ExampleSampleOrdered,
 		ExcludeTables: req.Options.ExcludeTables, ExcludeExampleTables: req.Options.ExcludeExampleTables,
 		ExcludeExampleFields: req.Options.ExcludeExampleFields, Seed: req.Options.Seed,
-	})
+	}})
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return "", &Error{"TIMEOUT", "schema extraction timed out", true}
