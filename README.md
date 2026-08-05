@@ -41,12 +41,14 @@ CGO_ENABLED=0 go build -o output/db2toon-mcp ./cmd/db2toon-mcp
 ./output/db2toon-mcp
 ```
 
-The server exposes `db2toon.extract_schema`. Its required arguments are
-`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, or `cockroachdb`) and `db`; optional extraction settings are supplied in
-an `options` object. The tool is read-only, uses a 30-second default timeout,
-and limits responses to 4 MiB. Set `options.timeout` and
-`options.max_output_bytes` to lower limits when needed. Connection strings are
-never included in tool errors or results.
+The server exposes `db2toon.extract_schema`. Its required argument is
+`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, or `cockroachdb`).
+Provide exactly one of `db` or `dump`; optional extraction settings are
+supplied in an `options` object. Dump files are parsed offline and never
+executed. The tool is read-only, uses a 30-second default timeout, and limits
+responses to 4 MiB. Set `options.timeout` and `options.max_output_bytes` to
+lower limits when needed. Connection strings are never included in tool errors
+or results.
 
 ### Basic Usage
 
@@ -55,6 +57,11 @@ never included in tool errors or results.
 
 # SQLite database file
 ./db2toon sqlite -db ./schema.db
+
+# Plain-text SQL dump (all supported SQL dialects)
+./db2toon postgres -dump ./schema.sql
+./db2toon sqlite -dump ./schema.sql
+./db2toon mysql -dump ./schema.sql
 
 # DuckDB database file (requires libduckdb at runtime)
 ./db2toon duckdb -db ./analytics.duckdb
@@ -97,12 +104,14 @@ Select multiple schemas, include partitioned tables, and change the default
 
 ### Flags
 
-- `-db string`: Database connection URL or local database path (required)
+- `-db string`: Database connection URL or local database path; mutually exclusive with `-dump`
+- `-dump string`: Plain-text SQL dump path; mutually exclusive with `-db`
 - `dialect`: `postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, or `cockroachdb` for `db2toon`; `pg2toon` always uses PostgreSQL
 - `-out string`: Output file path (optional, defaults to stdout)
 - `-schema string`: A single schema to extract (defaults to `public` for PostgreSQL and `main` for SQLite/DuckDB)
 - `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`
 - `-include-partitioned`: Include PostgreSQL partitioned tables
+- `-include-views`: Include supported views
 - `-exclude-tables string`: Comma-separated tables to exclude entirely; accepts `table` or `schema.table`
 - `-exclude-example-tables string`: Comma-separated tables to exclude from `@example` sampling
 - `-exclude-example-fields string`: Comma-separated qualified fields to exclude from examples, such as `public.users.password_hash`
@@ -110,6 +119,12 @@ Select multiple schemas, include partitioned tables, and change the default
 - `-example-sample-ordered`: Select sample rows using deterministic ordering for PostgreSQL (defaults to `false`)
 - `-seed int`: Seed for reproducible PostgreSQL sample selection (defaults to `0`; currently ignored by SQLite/DuckDB)
 - `-timeout duration`: Connection and extraction timeout (defaults to `30s`)
+
+Dump mode currently supports plain-text SQL exports for PostgreSQL, SQLite,
+DuckDB, MySQL/MariaDB, and CockroachDB. Common tables, columns, constraints,
+indexes, comments, and bounded `INSERT` examples are parsed without executing
+the dump. Triggers and other metadata without a canonical TOON representation
+are ignored.
 
 ## Output Format
 

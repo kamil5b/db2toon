@@ -169,12 +169,17 @@ func toolDefinition() map[string]any {
 	}
 	return map[string]any{
 		"name":        "db2toon.extract_schema",
-		"description": "Extract a database schema in compact TOON format using read-only metadata queries. Use this tool for tables, columns, relationships, constraints, indexes, views, or database structure. Schema-only extraction is the default. Request example rows only when explicitly asked. This tool does not execute arbitrary SQL or modify the database.",
+		"description": "Extract a database schema in compact TOON format from either a live database or a plain-text SQL dump using read-only metadata. Provide exactly one of db and dump. Dump contents are parsed offline and never executed. Use this tool for tables, columns, relationships, constraints, indexes, views, or database structure. Schema-only extraction is the default. Request example rows only when explicitly asked.",
 		"inputSchema": map[string]any{
-			"type": "object", "additionalProperties": false, "required": []string{"dialect", "db"},
+			"type": "object", "additionalProperties": false, "required": []string{"dialect"},
+			"oneOf": []any{
+				map[string]any{"required": []string{"db"}, "not": map[string]any{"required": []string{"dump"}}},
+				map[string]any{"required": []string{"dump"}, "not": map[string]any{"required": []string{"db"}}},
+			},
 			"properties": map[string]any{
 				"dialect": map[string]any{"type": "string", "enum": []string{"postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb"}, "description": "Database engine."},
 				"db":      map[string]any{"type": "string", "minLength": 1, "description": "Database connection URL. Credentials are never returned in tool output or errors."},
+				"dump":    map[string]any{"type": "string", "minLength": 1, "description": "Path to a supported plain-text SQL dump. Dump contents are parsed offline and never executed."},
 				"options": options,
 			},
 		},

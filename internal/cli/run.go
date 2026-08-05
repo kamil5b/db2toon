@@ -29,6 +29,7 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
 	dbURL := flags.String("db", "", "database URL or local database path")
+	dumpPath := flags.String("dump", "", "plain-text SQL dump file")
 	output := flags.String("out", "", "output file (default stdout)")
 	defaultSchema := "public"
 	if dialect == "sqlite" || dialect == "duckdb" {
@@ -40,6 +41,7 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	schemaName := flags.String("schema", "", "schema to extract (default "+defaultSchema+")")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
 	includePartitioned := flags.Bool("include-partitioned", false, "include partitioned tables")
+	includeViews := flags.Bool("include-views", false, "include views")
 	excludeTables := flags.String("exclude-tables", "", "comma-separated tables to exclude")
 	excludeExampleTables := flags.String("exclude-example-tables", "", "comma-separated tables to exclude from examples")
 	excludeExampleFields := flags.String("exclude-example-fields", "", "comma-separated fields to exclude from examples")
@@ -50,8 +52,8 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *dbURL == "" {
-		return fmt.Errorf("usage: %s -db <url>", commandName)
+	if (*dbURL == "") == (*dumpPath == "") {
+		return fmt.Errorf("exactly one of -db and -dump is required (usage: %s -db <url> or -dump <path>)", commandName)
 	}
 	if *timeout <= 0 {
 		return fmt.Errorf("timeout must be greater than zero")
@@ -64,8 +66,8 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		return err
 	}
 
-	toonText, serviceErr := service.Extract(context.Background(), service.Request{Dialect: dialect, DB: *dbURL, Options: service.Options{
-		Schemas: schemas, IncludePartitioned: *includePartitioned,
+	toonText, serviceErr := service.Extract(context.Background(), service.Request{Dialect: dialect, DB: *dbURL, Dump: *dumpPath, Options: service.Options{
+		Schemas: schemas, IncludeViews: *includeViews, IncludePartitioned: *includePartitioned,
 		ExcludeTables: splitCommaSeparated(*excludeTables), ExcludeExampleTables: splitCommaSeparated(*excludeExampleTables),
 		ExcludeExampleFields: splitCommaSeparated(*excludeExampleFields), ExampleSample: *exampleSample,
 		ExampleSampleOrdered: *exampleSampleOrdered, Seed: *seed, Timeout: timeout.String(),

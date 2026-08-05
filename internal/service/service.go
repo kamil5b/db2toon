@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ const MaxOutputBytes = 4 << 20
 type Request struct {
 	Dialect string  `json:"dialect"`
 	DB      string  `json:"db"`
+	Dump    string  `json:"dump,omitempty"`
 	Options Options `json:"options"`
 }
 
@@ -85,14 +87,19 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 	if dialect == "" {
 		return "", &Error{"INVALID_ARGUMENT", "dialect is required", false}
 	}
-	if req.DB == "" {
-		return "", &Error{"INVALID_ARGUMENT", "db is required", false}
+	if (req.DB == "") == (req.Dump == "") {
+		return "", &Error{"INVALID_ARGUMENT", "exactly one of db and dump is required", false}
 	}
 	if _, ok := CapabilitiesFor(dialect); !ok {
 		return "", &Error{"UNSUPPORTED_DIALECT", fmt.Sprintf("unsupported database dialect %q", dialect), false}
 	}
 	if req.Options.ExampleSample < 0 {
 		return "", &Error{"INVALID_ARGUMENT", "example_sample must not be negative", false}
+	}
+	if req.Dump != "" {
+		if info, statErr := os.Stat(req.Dump); statErr != nil || info.IsDir() {
+			return "", &Error{"INVALID_ARGUMENT", "dump file is not readable", false}
+		}
 	}
 	timeout := DefaultTimeout
 	if req.Options.Timeout != "" {
@@ -116,22 +123,43 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 	var err error
 	switch dialect {
 	case "postgres":
-		extractor, err = postgres.New(ctx, req.DB)
+		if req.Dump != "" {
+			extractor, err = postgres.NewFromDump(ctx, req.Dump)
+		} else {
+			extractor, err = postgres.New(ctx, req.DB)
+		}
 	case "sqlite":
-		extractor, err = sqlite.New(ctx, req.DB)
+		if req.Dump != "" {
+			extractor, err = sqlite.NewFromDump(ctx, req.Dump)
+		} else {
+			extractor, err = sqlite.New(ctx, req.DB)
+		}
 	case "duckdb":
-		extractor, err = duckdb.New(ctx, req.DB)
+		if req.Dump != "" {
+			extractor, err = duckdb.NewFromDump(ctx, req.Dump)
+		} else {
+			extractor, err = duckdb.New(ctx, req.DB)
+		}
 	case "mysql", "mariadb":
-		extractor, err = mysql.New(ctx, req.DB)
+		if req.Dump != "" {
+			extractor, err = mysql.NewFromDump(ctx, req.Dump)
+		} else {
+			extractor, err = mysql.New(ctx, req.DB)
+		}
 	case "cockroachdb":
-		extractor, err = cockroachdb.New(ctx, req.DB)
+		if req.Dump != "" {
+			extractor, err = cockroachdb.NewFromDump(ctx, req.Dump)
+		} else {
+			extractor, err = cockroachdb.New(ctx, req.DB)
+		}
 	}
 	if err != nil {
 		return "", &Error{"CONNECTION_FAILED", "unable to connect to the database", true}
 	}
 	defer extractor.Close(context.Background())
 	db, err := extractor.Extract(ctx, database.ExtractOptions{
-		Schemas: req.Options.Schemas, IncludeViews: req.Options.IncludeViews,
+		Schemas:            req.Options.Schemas,
+		IncludeViews:       req.Options.IncludeViews,
 		IncludePartitioned: req.Options.IncludePartitioned,
 		ExampleSample:      req.Options.ExampleSample, ExampleSampleOrdered: req.Options.ExampleSampleOrdered,
 		ExcludeTables: req.Options.ExcludeTables, ExcludeExampleTables: req.Options.ExcludeExampleTables,

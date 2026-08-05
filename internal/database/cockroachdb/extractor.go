@@ -20,6 +20,12 @@ func New(ctx context.Context, dsn string) (*Extractor, error) {
 	}
 	return &Extractor{e}, nil
 }
+
+func NewFromDump(ctx context.Context, path string) (database.Extractor, error) {
+	// CockroachDB's plain SQL exports are PostgreSQL-compatible for the
+	// common relational DDL handled by the PostgreSQL dump parser.
+	return postgres.NewFromDump(ctx, path)
+}
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	return e.Extractor.Extract(ctx, opts)
 }

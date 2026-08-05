@@ -25,6 +25,10 @@ func New(ctx context.Context, dsn string) (*Extractor, error) {
 	return &Extractor{sqlutil.New(db, "mysql")}, nil
 }
 
+func NewFromDump(ctx context.Context, path string) (database.Extractor, error) {
+	return sqlutil.NewDumpExtractor(ctx, path, "mysql", "")
+}
+
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	return e.Extractor.Extract(ctx, opts)
 }
