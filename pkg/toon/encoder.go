@@ -303,6 +303,9 @@ func shrink(value string) string {
 func indexDefinition(index schema.Index) string {
 	if index.Method != "" && len(index.Keys) != 0 {
 		definition := index.Method + " (" + strings.Join(index.Keys, ", ") + ")"
+		if index.Unique {
+			definition = "unique " + definition
+		}
 		if len(index.IncludedColumns) != 0 {
 			definition += " INCLUDE (" + identifiers(index.IncludedColumns) + ")"
 		}

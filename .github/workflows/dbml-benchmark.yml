@@ -1,0 +1,43 @@
+name: DBML benchmark
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Installation and invocation follow the official dbdocs db2dbml guide:
+      # https://docs.dbdocs.io/features/generate-dbml-from-db/
+      - name: Install DBML CLI
+        run: npm install --global @dbml/cli
+
+      - name: Verify db2dbml
+        run: db2dbml --version
+
+      - name: Run DBML conversion benchmark
+        env:
+          CGO_ENABLED: 0
+        run: make benchmark-dbml | tee dbml-benchmark.txt
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbml-benchmark-${{ github.sha }}
+          path: dbml-benchmark.txt
+          if-no-files-found: error
