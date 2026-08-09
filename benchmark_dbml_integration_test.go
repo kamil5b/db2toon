@@ -5,6 +5,7 @@ package db2toon_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,8 +61,11 @@ func BenchmarkDBMLPipeline(b *testing.B) {
 	direct := runDB2TOON(b, ctx, dsn)
 	dbmlText := runDB2DBML(b, ctx, db2dbml, dsn)
 	roundTrip := runDBML2TOON(b, dbmlText)
-	b.Logf("token counts (portable lexical tokenizer): db2toon=%d db2dbml=%d dbml2toon=%d",
-		tokenCount(direct), tokenCount(dbmlText), tokenCount(roundTrip))
+	directTokens := countTokens(b, direct)
+	dbmlTokens := countTokens(b, dbmlText)
+	roundTripTokens := countTokens(b, roundTrip)
+	b.Logf("token counts: db2toon=%s db2dbml=%s dbml2toon=%s",
+		directTokens, dbmlTokens, roundTripTokens)
 	if direct != roundTrip {
 		b.Logf("db2toon versus dbml2toon diff:\n%s", lineDiff(direct, roundTrip))
 	} else {
@@ -69,19 +73,19 @@ func BenchmarkDBMLPipeline(b *testing.B) {
 	}
 
 	b.Run("db2toon", func(b *testing.B) {
-		b.ReportMetric(float64(tokenCount(direct)), "tokens")
+		reportTokens(b, directTokens)
 		for i := 0; i < b.N; i++ {
 			_ = runDB2TOON(b, context.Background(), dsn)
 		}
 	})
 	b.Run("db2dbml", func(b *testing.B) {
-		b.ReportMetric(float64(tokenCount(dbmlText)), "tokens")
+		reportTokens(b, dbmlTokens)
 		for i := 0; i < b.N; i++ {
 			_ = runDB2DBML(b, context.Background(), db2dbml, dsn)
 		}
 	})
 	b.Run("dbml2toon", func(b *testing.B) {
-		b.ReportMetric(float64(tokenCount(roundTrip)), "tokens")
+		reportTokens(b, roundTripTokens)
 		for i := 0; i < b.N; i++ {
 			_ = runDBML2TOON(b, dbmlText)
 		}
@@ -126,10 +130,36 @@ func runDBML2TOON(tb testing.TB, input string) string {
 
 var benchmarkTokens = regexp.MustCompile(`[\pL\pN_]+|[^\s\pL\pN_]`)
 
-// tokenCount is intentionally local and deterministic. It counts words,
-// numbers, and punctuation rather than depending on a vendor-specific LLM
-// vocabulary or downloading tokenizer data during a benchmark.
-func tokenCount(text string) int { return len(benchmarkTokens.FindAllString(text, -1)) }
+type tokenCounts struct {
+	Local     int `json:"local"`
+	OpenAI    int `json:"openai"`
+	Anthropic int `json:"anthropic"`
+}
+
+func (c tokenCounts) String() string {
+	return fmt.Sprintf("{local:%d openai:%d anthropic:%d}", c.Local, c.OpenAI, c.Anthropic)
+}
+
+func countTokens(tb testing.TB, input string) tokenCounts {
+	tb.Helper()
+	counts := tokenCounts{Local: len(benchmarkTokens.FindAllString(input, -1))}
+	command := exec.Command("node", "benchmarks/token-count.mjs")
+	command.Stdin = strings.NewReader(input)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		tb.Fatalf("run offline OpenAI/Anthropic tokenizers: %v: %s\nrun npm install first", err, output)
+	}
+	if err := json.Unmarshal(output, &counts); err != nil {
+		tb.Fatalf("decode tokenizer output %q: %v", output, err)
+	}
+	return counts
+}
+
+func reportTokens(b *testing.B, counts tokenCounts) {
+	b.ReportMetric(float64(counts.Local), "local_tokens")
+	b.ReportMetric(float64(counts.OpenAI), "openai_tokens")
+	b.ReportMetric(float64(counts.Anthropic), "anthropic_tokens")
+}
 
 func lineDiff(want, got string) string {
 	wantLines, gotLines := strings.Split(want, "\n"), strings.Split(got, "\n")

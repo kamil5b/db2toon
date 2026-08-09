@@ -15,6 +15,7 @@ uses the PostgreSQL command documented in the
 
 ```bash
 npm install -g @dbml/cli
+npm install
 make benchmark-dbml
 ```
 
@@ -24,10 +25,17 @@ available, runs the Testcontainers benchmark, and uploads the complete output
 as an artifact. Keeping it manual avoids adding a container-backed performance
 test to every pull request.
 
-The result reports elapsed time and a `tokens` metric for each output. The
-portable token counter treats words, numbers, and punctuation as tokens; it is
-deliberately independent of any particular LLM vocabulary. The verbose output
-also reports the three token totals and a line-oriented diff between direct
-`db2toon` output and the `db2dbml` -> `dbml2toon` output. Records are present to
-make the container realistic, but the comparison uses schema-only output
-because `db2dbml` does not export table records.
+The result reports elapsed time and three token metrics for each output:
+
+- `local_tokens` uses the repository's deterministic lexical counter.
+- `openai_tokens` uses the offline `cl100k_base` encoding from `tiktoken`.
+- `anthropic_tokens` uses the offline `@anthropic-ai/tokenizer` package.
+
+None of these counters makes an API request or needs an API key. Token counts
+depend on a model's vocabulary, so the OpenAI and Anthropic values identify the
+local tokenizer used rather than claiming to represent every model from those
+providers. The verbose output also reports all nine token totals and a
+line-oriented diff between direct `db2toon` output and the `db2dbml` ->
+`dbml2toon` output. Records are present to make the container realistic, but
+the comparison uses schema-only output because `db2dbml` does not export table
+records.

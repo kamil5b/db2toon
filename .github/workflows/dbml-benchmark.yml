@@ -27,6 +27,9 @@ jobs:
       - name: Install DBML CLI
         run: npm install --global @dbml/cli
 
+      - name: Install offline tokenizers
+        run: npm install
+
       - name: Verify db2dbml
         run: db2dbml --version
 
