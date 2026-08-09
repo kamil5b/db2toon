@@ -14,6 +14,7 @@ A CLI tool that converts database schemas into the Toon schema definition format
 - **Comment Preservation**: Includes comments where the database exposes them; SQLite does not have catalog comments
 - **Index Documentation**: Extracts and documents database indexes
 - **Cross-Platform**: Builds without CGO for Linux, macOS, and Windows (amd64 and arm64)
+- **DBML Adapter**: Converts DBML files (or standard input) into the same TOON format
 
 ## Installation
 
@@ -24,6 +25,7 @@ git clone https://github.com/kamil5b/db2toon.git
 cd db2toon
 CGO_ENABLED=0 go build -o output/db2toon ./cmd/db2toon
 CGO_ENABLED=0 go build -o output/pg2toon ./cmd/pg2toon
+CGO_ENABLED=0 go build -o output/dbml2toon ./cmd/dbml2toon
 ```
 
 ### From Releases
@@ -98,6 +100,10 @@ or results.
 
 # Compatibility command; PostgreSQL is selected automatically.
 ./pg2toon -db "postgresql://user:password@localhost/dbname"
+
+# Convert DBML, either from a file or standard input.
+./dbml2toon schema.dbml
+cat schema.dbml | ./dbml2toon -out schema.toon
 ```
 
 ### Save to File

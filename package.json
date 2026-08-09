@@ -1,0 +1,9 @@
+{
+  "name": "db2toon-benchmarks",
+  "private": true,
+  "description": "Offline tokenizer dependencies for the DBML benchmark",
+  "dependencies": {
+    "@anthropic-ai/tokenizer": "^0.0.4",
+    "tiktoken": "^1.0.22"
+  }
+}
