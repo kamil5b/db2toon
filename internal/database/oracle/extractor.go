@@ -229,7 +229,7 @@ func (e *Extractor) loadRoutines(ctx context.Context, s *schema.Schema) error {
 	return rows.Err()
 }
 func (e *Extractor) loadSequences(ctx context.Context, s *schema.Schema) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT sequence_name,data_type,TO_CHAR(min_value),TO_CHAR(max_value),TO_CHAR(increment_by),cycle_flag FROM all_sequences WHERE sequence_owner=:1 ORDER BY sequence_name`, s.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT sequence_name,TO_CHAR(min_value),TO_CHAR(max_value),TO_CHAR(increment_by),cycle_flag FROM all_sequences WHERE sequence_owner=:1 ORDER BY sequence_name`, s.Name)
 	if err != nil {
 		return err
 	}
@@ -237,7 +237,8 @@ func (e *Extractor) loadSequences(ctx context.Context, s *schema.Schema) error {
 	for rows.Next() {
 		var q schema.Sequence
 		var cycle string
-		if err := rows.Scan(&q.Name, &q.NativeType, &q.Minimum, &q.Maximum, &q.Increment, &cycle); err != nil {
+		q.NativeType = "NUMBER"
+		if err := rows.Scan(&q.Name, &q.Minimum, &q.Maximum, &q.Increment, &cycle); err != nil {
 			return err
 		}
 		q.Cyclic = cycle == "Y"
