@@ -1,4 +1,6 @@
 output/
+dbml-error.log
+node_modules/
 
 # Disposable direct-adapter test artifacts
 .tmp/

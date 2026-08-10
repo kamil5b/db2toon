@@ -39,3 +39,26 @@ line-oriented diff between direct `db2toon` output and the `db2dbml` ->
 `dbml2toon` output. Records are present to make the container realistic, but
 the comparison uses schema-only output because `db2dbml` does not export table
 records.
+
+## Example result
+
+One single-operation run of the benchmark produced:
+
+| Path | Time | Local tokens | OpenAI tokens | Anthropic tokens |
+| --- | ---: | ---: | ---: | ---: |
+| PostgreSQL -> `db2toon` | 106.35 ms | 614 | 748 | 842 |
+| PostgreSQL -> `db2dbml` | 1.49 s | 898 | 1,029 | 1,152 |
+| `dbml2toon` | 218.40 µs | 481 | 640 | 720 |
+
+Compared with direct `db2toon`, `db2dbml` used 46.3% more local tokens, 37.6%
+more OpenAI tokens, and 36.8% more Anthropic tokens. The `dbml2toon` output
+used 21.7%, 14.4%, and 14.5% fewer tokens respectively. These percentages use
+the direct `db2toon` count as the baseline.
+
+The direct and round-trip TOON outputs differed in 68 of 75 compared line
+positions (90.7%). The round trip changed table ordering, native type
+spellings, identity metadata, constraint/index representation, and the
+ordering of columns in some composite foreign keys. Treat these values as an
+illustrative local run rather than a performance baseline: container startup,
+hardware, installed DBML CLI version, and benchmark iteration count affect the
+result.

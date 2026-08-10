@@ -275,5 +275,6 @@ INSERT INTO tasks (organization_id, project_id, assignee_id, title, priority, me
  (2, 3, 3, 'Import leads', 3, '{"source":"csv"}');
 INSERT INTO labels (organization_id, name, color) VALUES
  (1, 'backend', '#112233'), (1, 'frontend', '#abcdef'), (2, 'sales', '#ff9900');
-INSERT INTO task_labels VALUES (1, 1, 1, 1), (1, 1, 2, 1), (1, 2, 1, 2), (2, 3, 1, 3);
+-- The generated task IDs are global (1..4), not scoped by the composite project key.
+INSERT INTO task_labels VALUES (1, 1, 1, 1), (1, 1, 2, 1), (1, 2, 3, 2), (2, 3, 4, 3);
 `
