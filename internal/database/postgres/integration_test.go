@@ -5,6 +5,7 @@ package postgres
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -56,6 +57,7 @@ func TestPostgresSchemaToToon(t *testing.T) {
 
 	const fixture = `
 CREATE EXTENSION vector;
+CREATE EXTENSION btree_gist;
 
 CREATE TABLE users (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -75,6 +77,8 @@ CREATE TABLE posts (
 );
 CREATE INDEX posts_author_id_idx ON posts USING btree (author_id);
 CREATE INDEX posts_title_partial_idx ON posts USING btree (lower(title)) WHERE title <> '';
+CREATE INDEX posts_title_include_idx ON posts USING btree (title) INCLUDE (published_at);
+CREATE UNIQUE INDEX users_display_name_unique_idx ON users (display_name) WHERE display_name IS NOT NULL;
 
 INSERT INTO users (email, display_name) VALUES
     ('alice@example.com', 'Alice'),
@@ -85,7 +89,8 @@ INSERT INTO posts (author_id, title) VALUES
 
 CREATE TABLE tenants (
     id bigint PRIMARY KEY,
-    name text NOT NULL
+    name text NOT NULL,
+    normalized_name text GENERATED ALWAYS AS (lower(name)) STORED
 );
 CREATE TABLE tenant_accounts (
     tenant_id bigint NOT NULL,
@@ -134,6 +139,32 @@ CREATE TABLE vector_documents (
 );
 CREATE INDEX vector_documents_embedding_hnsw_idx
     ON vector_documents USING hnsw (embedding vector_l2_ops);
+CREATE TABLE room_bookings (
+    room_id bigint NOT NULL,
+    during daterange NOT NULL,
+    CONSTRAINT room_bookings_no_overlap EXCLUDE USING gist (room_id WITH =, during WITH &&)
+);
+CREATE TABLE sampled_items (
+    id bigint PRIMARY KEY,
+    name text NOT NULL
+);
+CREATE VIEW user_emails AS SELECT id, email FROM users;
+CREATE MATERIALIZED VIEW user_post_counts AS
+    SELECT author_id, count(*) AS post_count FROM posts GROUP BY author_id;
+
+CREATE SCHEMA audit;
+CREATE TABLE audit.organizations (id bigint PRIMARY KEY);
+CREATE TABLE audit.entries (
+    id bigint NOT NULL,
+    occurred_at date NOT NULL,
+    PRIMARY KEY (id, occurred_at)
+) PARTITION BY RANGE (occurred_at);
+CREATE TABLE audit.entries_2026 PARTITION OF audit.entries
+    FOR VALUES FROM ('2026-01-01') TO ('2027-01-01');
+CREATE TABLE cross_schema_records (
+    id bigint PRIMARY KEY,
+    organization_id bigint NOT NULL REFERENCES audit.organizations(id)
+);
 
 INSERT INTO tenants (id, name) VALUES (1, 'Acme');
 INSERT INTO tenant_accounts (tenant_id, account_id, name) VALUES (1, 10, 'Primary');
@@ -145,6 +176,12 @@ INSERT INTO post_tags (post_id, tag_id) VALUES (1, 1), (1, 2);
 INSERT INTO uuid_documents (body) VALUES ('{"kind":"note"}');
 INSERT INTO json_documents (body) VALUES ('{"kind":"note"}');
 INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
+INSERT INTO room_bookings (room_id, during) VALUES (1, '[2026-01-01,2026-01-02)');
+INSERT INTO sampled_items (id, name) VALUES
+    (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five');
+INSERT INTO audit.organizations (id) VALUES (1);
+INSERT INTO audit.entries (id, occurred_at) VALUES (1, '2026-01-01');
+INSERT INTO cross_schema_records (id, organization_id) VALUES (1, 1);
 `
 	if _, err := conn.Exec(ctx, fixture); err != nil {
 		t.Fatalf("create schema fixture: %v", err)
@@ -164,7 +201,7 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if err != nil {
 		t.Fatalf("extract schema: %v", err)
 	}
-	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 11 {
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 14 {
 		t.Fatalf("unexpected database: %#v", db)
 	}
 	posts := findTable(t, db.Schemas[0].Tables, "posts")
@@ -175,7 +212,7 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if len(posts.ForeignKeys) != 2 || posts.ForeignKeys[0].ReferencedTable != "users" {
 		t.Fatalf("posts foreign keys: %#v", posts.ForeignKeys)
 	}
-	if len(posts.Indexes) != 2 || posts.Indexes[0].Method != "btree" {
+	if len(posts.Indexes) != 3 || findIndex(t, posts.Indexes, "posts_author_id_idx").Method != "btree" {
 		t.Fatalf("posts indexes: %#v", posts.Indexes)
 	}
 	if len(users.Uniques) != 1 {
@@ -212,7 +249,7 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if posts.ForeignKeys[0].OnDelete != "NO ACTION" {
 		t.Fatalf("delete action = %q", posts.ForeignKeys[0].OnDelete)
 	}
-	if posts.Indexes[0].Keys[0] != "author_id" || posts.Indexes[1].Keys[0] != "lower(title::text)" {
+	if findIndex(t, posts.Indexes, "posts_author_id_idx").Keys[0] != "author_id" || findIndex(t, posts.Indexes, "posts_title_partial_idx").Keys[0] != "lower(title::text)" {
 		t.Fatalf("index keys: %#v", posts.Indexes)
 	}
 	if users.Schema != "public" {
@@ -227,10 +264,10 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if users.Uniques[0].Name == "" {
 		t.Fatal("unique name is empty")
 	}
-	if len(users.Indexes) == 0 || !users.Indexes[0].ConstraintBacked {
+	if len(users.Indexes) == 0 || !findIndex(t, users.Indexes, "users_email_key").ConstraintBacked {
 		t.Fatalf("constraint-backed indexes: %#v", users.Indexes)
 	}
-	if users.Indexes[0].Definition == "" {
+	if findIndex(t, users.Indexes, "users_email_key").Definition == "" {
 		t.Fatal("index definition is empty")
 	}
 	if users.Columns[0].NativeType != "bigint" {
@@ -260,19 +297,25 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if len(posts.Exclusions) != 0 {
 		t.Fatalf("posts exclusions: %#v", posts.Exclusions)
 	}
-	if posts.Indexes[0].Predicate != "" {
-		t.Fatalf("index predicate = %q", posts.Indexes[0].Predicate)
+	if findIndex(t, posts.Indexes, "posts_author_id_idx").Predicate != "" {
+		t.Fatalf("index predicate = %q", findIndex(t, posts.Indexes, "posts_author_id_idx").Predicate)
 	}
-	if len(posts.Indexes[0].IncludedColumns) != 0 {
-		t.Fatalf("included columns: %#v", posts.Indexes[0].IncludedColumns)
+	if got := findIndex(t, posts.Indexes, "posts_title_partial_idx").Predicate; got == "" {
+		t.Fatal("partial index predicate is empty")
 	}
-	if posts.Indexes[0].Unique {
+	if got := findIndex(t, posts.Indexes, "posts_title_include_idx").IncludedColumns; !reflect.DeepEqual(got, []string{"published_at"}) {
+		t.Fatalf("included columns: %#v", got)
+	}
+	if findIndex(t, posts.Indexes, "posts_author_id_idx").Unique {
 		t.Fatal("posts index should not be unique")
 	}
-	if posts.Indexes[0].ConstraintBacked {
+	if findIndex(t, posts.Indexes, "posts_author_id_idx").ConstraintBacked {
 		t.Fatal("posts index should not back a constraint")
 	}
-	if len(db.Schemas[0].Tables) != 11 {
+	if uniqueIndex := findIndex(t, users.Indexes, "users_display_name_unique_idx"); !uniqueIndex.Unique || uniqueIndex.ConstraintBacked {
+		t.Fatalf("standalone unique index: %#v", uniqueIndex)
+	}
+	if len(db.Schemas[0].Tables) != 14 {
 		t.Fatal("unexpected table count")
 	}
 	if posts.Name != "posts" {
@@ -323,6 +366,18 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if len(events.Checks) != 1 {
 		t.Fatalf("event checks: %#v", events.Checks)
 	}
+	tenants := findTable(t, db.Schemas[0].Tables, "tenants")
+	if tenants.Columns[2].Generated != "s" {
+		t.Fatalf("generated column: %#v", tenants.Columns[2])
+	}
+	bookings := findTable(t, db.Schemas[0].Tables, "room_bookings")
+	if len(bookings.Exclusions) != 1 || bookings.Exclusions[0].Name != "room_bookings_no_overlap" || bookings.Exclusions[0].Definition == "" {
+		t.Fatalf("exclusion constraint: %#v", bookings.Exclusions)
+	}
+	crossSchema := findTable(t, db.Schemas[0].Tables, "cross_schema_records")
+	if len(crossSchema.ForeignKeys) != 1 || crossSchema.ForeignKeys[0].ReferencedSchema != "audit" {
+		t.Fatalf("cross-schema foreign key: %#v", crossSchema.ForeignKeys)
+	}
 	profile := findTable(t, db.Schemas[0].Tables, "user_profiles")
 	if len(profile.Uniques) != 0 || len(profile.ForeignKeys) != 1 {
 		t.Fatalf("one-to-one relationship: %#v", profile)
@@ -357,13 +412,13 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	}
 	withoutJSONDocuments, err := extractor.Extract(ctx, database.ExtractOptions{
 		Schemas:       []string{"public"},
-		ExcludeTables: []string{"json_documents"},
+		ExcludeTables: []string{"public.json_documents"},
 	})
 	if err != nil {
 		t.Fatalf("extract schema without json documents: %v", err)
 	}
-	if len(withoutJSONDocuments.Schemas[0].Tables) != 10 {
-		t.Fatalf("excluded table count = %d, want 10", len(withoutJSONDocuments.Schemas[0].Tables))
+	if len(withoutJSONDocuments.Schemas[0].Tables) != 13 {
+		t.Fatalf("excluded table count = %d, want 13", len(withoutJSONDocuments.Schemas[0].Tables))
 	}
 	if hasTable(withoutJSONDocuments.Schemas[0].Tables, "json_documents") {
 		t.Fatal("json_documents should be excluded")
@@ -387,6 +442,46 @@ INSERT INTO vector_documents (embedding) VALUES ('[1,2,3]');
 	if posts.ForeignKeys[0].LocalColumns[0] != "author_id" || posts.ForeignKeys[0].ReferencedColumns[0] != "id" {
 		t.Fatalf("foreign key columns: %#v", posts.ForeignKeys[0])
 	}
+	withViews, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:       []string{"public"},
+		IncludeViews:  true,
+		ExampleSample: 1,
+	})
+	if err != nil {
+		t.Fatalf("extract schema with views: %v", err)
+	}
+	if !hasTable(withViews.Schemas[0].Tables, "user_emails") || !hasTable(withViews.Schemas[0].Tables, "user_post_counts") {
+		t.Fatalf("views missing: %#v", withViews.Schemas[0].Tables)
+	}
+	withPartitioned, err := extractor.Extract(ctx, database.ExtractOptions{
+		Schemas:            []string{"audit"},
+		IncludePartitioned: true,
+	})
+	if err != nil {
+		t.Fatalf("extract schema with partitioned tables: %v", err)
+	}
+	if len(withPartitioned.Schemas) != 1 || !hasTable(withPartitioned.Schemas[0].Tables, "entries") {
+		t.Fatalf("partitioned table missing: %#v", withPartitioned)
+	}
+	multipleSchemas, err := extractor.Extract(ctx, database.ExtractOptions{Schemas: []string{"public", "audit"}})
+	if err != nil {
+		t.Fatalf("extract multiple schemas: %v", err)
+	}
+	if len(multipleSchemas.Schemas) != 2 || !hasTable(findSchema(t, multipleSchemas.Schemas, "audit").Tables, "organizations") {
+		t.Fatalf("multiple schemas: %#v", multipleSchemas.Schemas)
+	}
+	seededOptions := database.ExtractOptions{Schemas: []string{"public"}, ExampleSample: 2, Seed: 42}
+	firstSeeded, err := extractor.Extract(ctx, seededOptions)
+	if err != nil {
+		t.Fatalf("extract seeded examples: %v", err)
+	}
+	secondSeeded, err := extractor.Extract(ctx, seededOptions)
+	if err != nil {
+		t.Fatalf("extract seeded examples again: %v", err)
+	}
+	if got, want := findTable(t, firstSeeded.Schemas[0].Tables, "sampled_items").Example.Rows, findTable(t, secondSeeded.Schemas[0].Tables, "sampled_items").Example.Rows; !reflect.DeepEqual(got, want) {
+		t.Fatalf("seeded examples differ: got %#v, want %#v", got, want)
+	}
 }
 
 func hasTable(tables []schema.Table, name string) bool {
@@ -407,4 +502,26 @@ func findTable(t *testing.T, tables []schema.Table, name string) schema.Table {
 	}
 	t.Fatalf("table %q not found", name)
 	return schema.Table{}
+}
+
+func findSchema(t *testing.T, schemas []schema.Schema, name string) schema.Schema {
+	t.Helper()
+	for _, s := range schemas {
+		if s.Name == name {
+			return s
+		}
+	}
+	t.Fatalf("schema %q not found", name)
+	return schema.Schema{}
+}
+
+func findIndex(t *testing.T, indexes []schema.Index, name string) schema.Index {
+	t.Helper()
+	for _, index := range indexes {
+		if index.Name == name {
+			return index
+		}
+	}
+	t.Fatalf("index %q not found", name)
+	return schema.Index{}
 }
