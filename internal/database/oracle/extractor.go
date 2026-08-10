@@ -234,7 +234,7 @@ func (e *Extractor) loadRoutines(ctx context.Context, s *schema.Schema) error {
 	return rows.Err()
 }
 func (e *Extractor) loadSequences(ctx context.Context, s *schema.Schema) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT sequence_name,TO_CHAR(min_value),TO_CHAR(max_value),TO_CHAR(increment_by),cycle_flag FROM all_sequences WHERE sequence_owner=:1 ORDER BY sequence_name`, s.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT sequence_name,TO_CHAR(min_value),TO_CHAR(max_value),TO_CHAR(increment_by),cycle_flag FROM all_sequences WHERE sequence_owner=:1 AND sequence_name NOT LIKE 'ISEQ$$_%' ORDER BY sequence_name`, s.Name)
 	if err != nil {
 		return err
 	}
