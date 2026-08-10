@@ -3,11 +3,108 @@ name: test
 on:
   pull_request:
     types: [synchronize, opened, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      run_all_integrations:
+        description: Run every database integration suite
+        type: boolean
+        default: false
+      run_postgres:
+        description: Run PostgreSQL integration
+        type: boolean
+        default: false
+      run_mysql:
+        description: Run MySQL integration
+        type: boolean
+        default: false
+      run_mssql:
+        description: Run SQL Server integration
+        type: boolean
+        default: false
+      run_oracle:
+        description: Run Oracle integration
+        type: boolean
+        default: false
+      run_cockroachdb:
+        description: Run CockroachDB integration
+        type: boolean
+        default: false
+      run_duckdb:
+        description: Run DuckDB integration
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      postgres: ${{ steps.filter.outputs.postgres }}
+      mysql: ${{ steps.filter.outputs.mysql }}
+      mssql: ${{ steps.filter.outputs.mssql }}
+      oracle: ${{ steps.filter.outputs.oracle }}
+      cockroachdb: ${{ steps.filter.outputs.cockroachdb }}
+      duckdb: ${{ steps.filter.outputs.duckdb }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            postgres:
+              - 'internal/database/postgres/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+            mysql:
+              - 'internal/database/mysql/**'
+              - 'internal/database/sqlutil/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+            mssql:
+              - 'internal/database/mssql/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+            oracle:
+              - 'internal/database/oracle/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+            cockroachdb:
+              - 'internal/database/cockroachdb/**'
+              - 'internal/database/postgres/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+            duckdb:
+              - 'internal/database/duckdb/**'
+              - 'internal/database/sqlutil/**'
+              - 'internal/database/extractor.go'
+              - 'pkg/schema/**'
+              - 'pkg/toon/**'
+              - 'extract.go'
+              - 'go.mod'
+              - 'go.sum'
+
   unit:
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +118,8 @@ jobs:
           CGO_ENABLED: 0
 
   postgres-integration:
+    needs: changes
+    if: needs.changes.outputs.postgres == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_postgres))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +132,8 @@ jobs:
           CGO_ENABLED: 0
 
   mysql-integration:
+    needs: changes
+    if: needs.changes.outputs.mysql == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_mysql))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +146,8 @@ jobs:
           CGO_ENABLED: 0
 
   mssql-integration:
+    needs: changes
+    if: needs.changes.outputs.mssql == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_mssql))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +160,8 @@ jobs:
           CGO_ENABLED: 0
 
   oracle-integration:
+    needs: changes
+    if: needs.changes.outputs.oracle == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_oracle))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +174,8 @@ jobs:
           CGO_ENABLED: 0
 
   cockroachdb-integration:
+    needs: changes
+    if: needs.changes.outputs.cockroachdb == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_cockroachdb))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +188,8 @@ jobs:
           CGO_ENABLED: 0
 
   duckdb-integration:
+    needs: changes
+    if: needs.changes.outputs.duckdb == 'true' || (github.event_name == 'workflow_dispatch' && (inputs.run_all_integrations || inputs.run_duckdb))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

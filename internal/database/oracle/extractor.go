@@ -119,7 +119,7 @@ func (e *Extractor) loadColumns(ctx context.Context, t *schema.Table) error {
 }
 
 func (e *Extractor) loadConstraints(ctx context.Context, t *schema.Table) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT ac.constraint_name,ac.constraint_type,acc.column_name,ac.r_owner,ac.r_constraint_name,ac.delete_rule,ac.search_condition FROM all_constraints ac LEFT JOIN all_cons_columns acc ON acc.owner=ac.owner AND acc.constraint_name=ac.constraint_name WHERE ac.owner=:1 AND ac.table_name=:2 AND ac.constraint_type IN ('P','U','R','C') ORDER BY ac.constraint_name,acc.position`, t.Schema, t.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT ac.constraint_name,ac.constraint_type,acc.column_name,ac.r_owner,ac.r_constraint_name,ac.delete_rule,ac.search_condition FROM all_constraints ac LEFT JOIN all_cons_columns acc ON acc.owner=ac.owner AND acc.constraint_name=ac.constraint_name WHERE ac.owner=:1 AND ac.table_name=:2 AND ac.constraint_type IN ('P','U','R','C') AND (ac.constraint_type <> 'C' OR ac.generated = 'USER NAME') ORDER BY ac.constraint_name,acc.position`, t.Schema, t.Name)
 	if err != nil {
 		return err
 	}
