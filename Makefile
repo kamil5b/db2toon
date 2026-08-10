@@ -8,7 +8,7 @@ OUT ?= $(OUTPUT_DIR)/schema.toon
 DB_URL ?=
 OPTS ?=
 
-.PHONY: build test test-integration test-integration-mysql test-integration-mssql test-integration-cockroachdb test-integration-duckdb test-all benchmark-dbml run
+.PHONY: build test test-integration test-integration-mysql test-integration-mssql test-integration-oracle test-integration-cockroachdb test-integration-duckdb test-all benchmark-dbml run
 
 build:
 	@mkdir -p $(OUTPUT_DIR)
@@ -39,6 +39,9 @@ test-integration-mysql:
 
 test-integration-mssql:
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mssql
+
+test-integration-oracle:
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/oracle
 
 test-all: test test-integration
 

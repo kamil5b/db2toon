@@ -11,6 +11,7 @@ import (
 	"github.com/kamil5b/db2toon/internal/database/duckdb"
 	"github.com/kamil5b/db2toon/internal/database/mssql"
 	"github.com/kamil5b/db2toon/internal/database/mysql"
+	"github.com/kamil5b/db2toon/internal/database/oracle"
 	"github.com/kamil5b/db2toon/internal/database/postgres"
 	"github.com/kamil5b/db2toon/internal/database/sqlite"
 	"github.com/kamil5b/db2toon/pkg/schema"
@@ -106,6 +107,8 @@ func newExtractor(ctx context.Context, dialect string, req Request) (database.Ex
 		return cockroachdb.New(ctx, req.DB)
 	case "mssql", "sqlserver":
 		return mssql.New(ctx, req.DB)
+	case "oracle":
+		return oracle.New(ctx, req.DB)
 	default:
 		return nil, fmt.Errorf("unsupported database dialect %q", dialect)
 	}

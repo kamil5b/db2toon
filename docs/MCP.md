@@ -105,7 +105,7 @@ This tool does not execute arbitrary SQL or modify the database.
   "properties": {
     "dialect": {
       "type": "string",
-      "enum": ["postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb", "mssql", "sqlserver"],
+      "enum": ["postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb", "mssql", "sqlserver", "oracle"],
       "description": "Database engine."
     },
     "db": {

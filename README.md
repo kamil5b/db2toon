@@ -4,7 +4,7 @@ A CLI tool that converts database schemas into the Toon schema definition format
 
 ## Overview
 
-`db2toon` connects to a database and extracts schema information (tables, columns, types, constraints, indexes, routines, triggers, and examples), then converts it into the human-readable Toon format for database design documentation and visualization. PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, and Microsoft SQL Server are supported. `pg2toon` remains a PostgreSQL compatibility command.
+`db2toon` connects to a database and extracts schema information (tables, columns, types, constraints, indexes, routines, triggers, and examples), then converts it into the human-readable Toon format for database design documentation and visualization. PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, Microsoft SQL Server, and Oracle are supported. `pg2toon` remains a PostgreSQL compatibility command.
 
 ## Features
 
@@ -76,7 +76,7 @@ CGO_ENABLED=0 go build -o output/db2toon-mcp ./cmd/db2toon-mcp
 ```
 
 The server exposes `db2toon.extract_schema`. Its required argument is
-`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, or `sqlserver`).
+`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, `sqlserver`, or `oracle`).
 Provide exactly one of `db` or `dump`; optional extraction settings are
 supplied in an `options` object. Dump files are parsed offline and never
 executed. The tool is read-only, uses a 30-second default timeout, and limits
@@ -102,6 +102,9 @@ or results.
 
 # Microsoft SQL Server (defaults to dbo)
 ./db2toon mssql -db 'sqlserver://sa:password@localhost:1433?database=app&encrypt=disable'
+
+# Oracle (defaults to the current schema)
+./db2toon oracle -db 'oracle://app:password@localhost:1521/FREEPDB1'
 
 # Compatibility command; PostgreSQL is selected automatically.
 ./pg2toon -db "postgresql://user:password@localhost/dbname"

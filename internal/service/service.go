@@ -68,6 +68,8 @@ func CapabilitiesFor(dialect string) (Capabilities, bool) {
 			"schemas", "include_views", "example_sample", "exclude_tables",
 			"exclude_example_tables", "exclude_example_fields",
 		}}, true
+	case "oracle":
+		return Capabilities{Dialect: "oracle", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
 	default:
 		return Capabilities{}, false
 	}

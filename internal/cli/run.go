@@ -23,8 +23,8 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		dialect = strings.ToLower(args[0])
 		args = args[1:]
 	}
-	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" && dialect != "mysql" && dialect != "mariadb" && dialect != "cockroachdb" && dialect != "mssql" && dialect != "sqlserver" {
-		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb, mysql, mariadb, cockroachdb, mssql)", dialect)
+	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" && dialect != "mysql" && dialect != "mariadb" && dialect != "cockroachdb" && dialect != "mssql" && dialect != "sqlserver" && dialect != "oracle" {
+		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb, mysql, mariadb, cockroachdb, mssql, oracle)", dialect)
 	}
 
 	flags := flag.NewFlagSet(commandName, flag.ContinueOnError)
