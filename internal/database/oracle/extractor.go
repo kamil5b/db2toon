@@ -218,7 +218,7 @@ func (e *Extractor) loadTriggers(ctx context.Context, t *schema.Table) error {
 	return rows.Err()
 }
 func (e *Extractor) loadRoutines(ctx context.Context, s *schema.Schema) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT object_name,object_type FROM all_procedures WHERE owner=:1 AND object_type IN ('FUNCTION','PROCEDURE') AND subprogram_id=0 ORDER BY object_name`, s.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT object_name,object_type FROM all_procedures WHERE owner=:1 AND object_type IN ('FUNCTION','PROCEDURE') AND procedure_name IS NULL ORDER BY object_name`, s.Name)
 	if err != nil {
 		return err
 	}
