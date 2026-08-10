@@ -1,6 +1,8 @@
 package schema
 
 type Database struct {
+	Dialect    string
+	Name       string
 	Extensions []Extension
 	Schemas    []Schema
 }

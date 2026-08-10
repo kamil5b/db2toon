@@ -25,11 +25,14 @@ func TestExtractFromDumpAsExternalPackage(t *testing.T) {
 	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 1 {
 		t.Fatalf("unexpected schema: %#v", db)
 	}
+	if db.Dialect != "postgres" || db.Name != "schema" {
+		t.Fatalf("database metadata = %#v", db)
+	}
 	var output bytes.Buffer
 	if err := db2toon.Encode(&output, db); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "[users]") || strings.Contains(output.String(), "hidden") {
+	if !strings.Contains(output.String(), "@database schema {dialect=postgres}") || !strings.Contains(output.String(), "[users]") || strings.Contains(output.String(), "hidden") {
 		t.Fatalf("output = %q", output.String())
 	}
 }

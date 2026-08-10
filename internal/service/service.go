@@ -11,11 +11,12 @@ import (
 	"time"
 
 	db2toon "github.com/kamil5b/db2toon"
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/pkg/toon"
 )
 
-const DefaultTimeout = 30 * time.Second
-const MaxOutputBytes = 4 << 20
+const DefaultTimeout = constants.DefaultTimeout
+const MaxOutputBytes = constants.MaximumOutputBytes
 
 type Request struct {
 	Dialect string  `json:"dialect"`
@@ -45,31 +46,31 @@ type Capabilities struct {
 
 func CapabilitiesFor(dialect string) (Capabilities, bool) {
 	switch strings.ToLower(dialect) {
-	case "postgres":
-		return Capabilities{Dialect: "postgres", Options: []string{
+	case constants.DialectPostgres:
+		return Capabilities{Dialect: constants.DialectPostgres, Options: []string{
 			"schemas", "include_views", "include_partitioned", "example_sample",
 			"example_sample_ordered", "exclude_tables", "exclude_example_tables",
 			"exclude_example_fields", "seed",
 		}}, true
-	case "sqlite":
-		return Capabilities{Dialect: "sqlite", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
-	case "duckdb":
-		return Capabilities{Dialect: "duckdb", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
-	case "mysql", "mariadb":
-		return Capabilities{Dialect: "mysql", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
-	case "cockroachdb":
-		return Capabilities{Dialect: "cockroachdb", Options: []string{
+	case constants.DialectSQLite:
+		return Capabilities{Dialect: constants.DialectSQLite, Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case constants.DialectDuckDB:
+		return Capabilities{Dialect: constants.DialectDuckDB, Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case constants.DialectMySQL, constants.DialectMariaDB:
+		return Capabilities{Dialect: constants.DialectMySQL, Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case constants.DialectCockroachDB:
+		return Capabilities{Dialect: constants.DialectCockroachDB, Options: []string{
 			"schemas", "include_views", "include_partitioned", "example_sample",
 			"example_sample_ordered", "exclude_tables", "exclude_example_tables",
 			"exclude_example_fields", "seed",
 		}}, true
-	case "mssql", "sqlserver":
-		return Capabilities{Dialect: "mssql", Options: []string{
+	case constants.DialectMSSQL, constants.DialectSQLServer:
+		return Capabilities{Dialect: constants.DialectMSSQL, Options: []string{
 			"schemas", "include_views", "example_sample", "exclude_tables",
 			"exclude_example_tables", "exclude_example_fields",
 		}}, true
-	case "oracle":
-		return Capabilities{Dialect: "oracle", Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
+	case constants.DialectOracle:
+		return Capabilities{Dialect: constants.DialectOracle, Options: []string{"schemas", "include_views", "example_sample", "exclude_tables", "exclude_example_tables", "exclude_example_fields"}}, true
 	default:
 		return Capabilities{}, false
 	}
@@ -107,8 +108,8 @@ func Extract(ctx context.Context, req Request) (string, *Error) {
 	}
 	limit := MaxOutputBytes
 	if req.Options.MaxOutputBytes != 0 {
-		if req.Options.MaxOutputBytes < 1024 || req.Options.MaxOutputBytes > MaxOutputBytes {
-			return "", &Error{"INVALID_ARGUMENT", fmt.Sprintf("max_output_bytes must be between 1024 and %d", MaxOutputBytes), false}
+		if req.Options.MaxOutputBytes < constants.MinimumOutputBytes || req.Options.MaxOutputBytes > MaxOutputBytes {
+			return "", &Error{"INVALID_ARGUMENT", fmt.Sprintf("max_output_bytes must be between %d and %d", constants.MinimumOutputBytes, MaxOutputBytes), false}
 		}
 		limit = req.Options.MaxOutputBytes
 	}

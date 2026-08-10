@@ -5,6 +5,8 @@ package mssql
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +139,45 @@ INSERT INTO app.posts (author_id, title) VALUES (1, N'Hello'), (2, N'World');`);
 	}
 	if len(db.Schemas[0].Routines) != 2 || db.Schemas[0].Routines[0].Name != "list_users" || db.Schemas[0].Routines[1].Name != "user_count" {
 		t.Fatalf("routines: %#v", db.Schemas[0].Routines)
+	}
+}
+
+func TestSQLServerDumpExtraction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schema.sql")
+	const dump = `
+CREATE SCHEMA app;
+CREATE TYPE app.account_code FROM nvarchar(24);
+CREATE SEQUENCE app.invoice_number AS bigint START WITH 100 INCREMENT BY 5;
+CREATE TABLE app.users (id bigint IDENTITY(1,1) PRIMARY KEY, email nvarchar(255) NOT NULL UNIQUE);
+CREATE VIEW app.user_names AS SELECT id, email FROM app.users;
+GO
+CREATE FUNCTION app.user_count() RETURNS int AS BEGIN RETURN 1; END;
+GO
+CREATE PROCEDURE app.list_users AS SELECT id, email FROM app.users;
+GO
+CREATE TRIGGER app.users_audit ON app.users AFTER INSERT, UPDATE AS BEGIN SET NOCOUNT ON; END;
+GO
+CREATE SYNONYM app.people FOR app.users;
+`
+	if err := os.WriteFile(path, []byte(dump), 0600); err != nil {
+		t.Fatal(err)
+	}
+	extractor, err := NewFromDump(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := extractor.Extract(context.Background(), database.ExtractOptions{Schemas: []string{"app"}, IncludeViews: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 2 {
+		t.Fatalf("database: %#v", db)
+	}
+	if len(db.Schemas[0].Types) != 1 || len(db.Schemas[0].Sequences) != 1 || len(db.Schemas[0].Synonyms) != 1 || len(db.Schemas[0].Routines) != 2 {
+		t.Fatalf("schema objects: %#v", db.Schemas[0])
+	}
+	if triggers := findTable(db.Schemas[0].Tables, "users").Triggers; len(triggers) != 1 || triggers[0].Name != "users_audit" {
+		t.Fatalf("triggers: %#v", triggers)
 	}
 }
 

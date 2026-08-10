@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/database"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
@@ -25,7 +26,7 @@ func (e *Extractor) Close(context.Context) error { return e.db.Close() }
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	sch := opts.Schemas
 	if len(sch) == 0 {
-		if e.dialect == "mysql" {
+		if e.dialect == constants.DialectMySQL {
 			var current sql.NullString
 			if err := e.db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&current); err != nil {
 				return nil, fmt.Errorf("query current database: %w", err)
@@ -35,7 +36,7 @@ func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (
 			}
 			sch = []string{current.String}
 		} else {
-			sch = []string{"main"}
+			sch = []string{constants.SchemaMain}
 		}
 	}
 	var out schema.Database
@@ -54,12 +55,12 @@ func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (
 			}
 			s.Tables = append(s.Tables, tables[i])
 		}
-		if e.dialect == "mysql" {
+		if e.dialect == constants.DialectMySQL {
 			if err := e.mysqlRoutines(ctx, &s); err != nil {
 				return nil, err
 			}
 		}
-		if e.dialect == "duckdb" {
+		if e.dialect == constants.DialectDuckDB {
 			if err := e.duckDBEnums(ctx, &s); err != nil {
 				return nil, err
 			}
@@ -71,15 +72,15 @@ func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (
 
 func (e *Extractor) tables(ctx context.Context, namespace string, opts database.ExtractOptions) ([]schema.Table, error) {
 	var q string
-	if e.dialect == "sqlite" {
+	if e.dialect == constants.DialectSQLite {
 		q = fmt.Sprintf("SELECT name, type, '' FROM %s.sqlite_master WHERE type IN ('table'%s) AND name NOT LIKE 'sqlite_%%' ORDER BY name", quoteIdent(namespace), viewsSQL(opts.IncludeViews, e.dialect))
-	} else if e.dialect == "mysql" {
+	} else if e.dialect == constants.DialectMySQL {
 		q = "SELECT table_name, table_type, COALESCE(table_comment,'') FROM information_schema.tables WHERE table_schema = ? AND table_type IN ('BASE TABLE','LOCAL TEMPORARY','TEMPORARY'" + viewsSQL(opts.IncludeViews, e.dialect) + ") ORDER BY table_name"
 	} else {
 		q = "SELECT table_name, table_type, COALESCE('','') FROM information_schema.tables WHERE table_schema = ? AND table_type IN ('BASE TABLE','LOCAL TEMPORARY','TEMPORARY'" + viewsSQL(opts.IncludeViews, e.dialect) + ") ORDER BY table_name"
 	}
 	args := []any{}
-	if e.dialect == "duckdb" || e.dialect == "mysql" {
+	if e.dialect == constants.DialectDuckDB || e.dialect == constants.DialectMySQL {
 		args = append(args, namespace)
 	}
 	rows, err := e.db.QueryContext(ctx, q, args...)
@@ -107,7 +108,7 @@ func (e *Extractor) tables(ctx context.Context, namespace string, opts database.
 
 func viewsSQL(include bool, dialect string) string {
 	if include {
-		if dialect == "sqlite" {
+		if dialect == constants.DialectSQLite {
 			return ", 'view'"
 		}
 		return ", 'VIEW'"
@@ -117,7 +118,7 @@ func viewsSQL(include bool, dialect string) string {
 
 func (e *Extractor) populate(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
 	var err error
-	if e.dialect == "sqlite" {
+	if e.dialect == constants.DialectSQLite {
 		err = e.populateSQLite(ctx, t, opts)
 	} else {
 		err = e.populateDuckDB(ctx, t, opts)
@@ -309,7 +310,7 @@ func (e *Extractor) sqliteTriggers(ctx context.Context, t *schema.Table) error {
 
 func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
 	query := "SELECT column_name, data_type, is_nullable, COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position"
-	if e.dialect == "mysql" {
+	if e.dialect == constants.DialectMySQL {
 		query = "SELECT column_name, data_type, is_nullable, COALESCE(column_default,''), COALESCE(column_comment,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position"
 	}
 	rows, err := e.db.QueryContext(ctx, query, t.Schema, t.Name)
@@ -320,7 +321,7 @@ func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts da
 	for rows.Next() {
 		var c schema.Column
 		var nullable string
-		if e.dialect == "mysql" {
+		if e.dialect == constants.DialectMySQL {
 			if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &c.Default, &c.Comment); err != nil {
 				return err
 			}
@@ -336,7 +337,7 @@ func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts da
 	if err := e.duckConstraints(ctx, t, opts); err != nil {
 		return err
 	}
-	if e.dialect == "mysql" {
+	if e.dialect == constants.DialectMySQL {
 		if err := e.mysqlForeignKeys(ctx, t); err != nil {
 			return err
 		}
@@ -589,7 +590,7 @@ func sqliteChecks(table, createSQL string) []schema.CheckConstraint {
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 func (e *Extractor) quoteIdent(s string) string {
-	if e.dialect == "mysql" {
+	if e.dialect == constants.DialectMySQL {
 		return "`" + strings.ReplaceAll(s, "`", "``") + "`"
 	}
 	return quoteIdent(s)

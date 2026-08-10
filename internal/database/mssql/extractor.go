@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/internal/database/sqlutil"
 	"github.com/kamil5b/db2toon/pkg/schema"
 	_ "github.com/microsoft/go-mssqldb"
 )
@@ -15,7 +17,7 @@ import (
 type Extractor struct{ db *sql.DB }
 
 func New(ctx context.Context, dsn string) (*Extractor, error) {
-	db, err := sql.Open("sqlserver", dsn)
+	db, err := sql.Open(constants.DialectSQLServer, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -26,12 +28,17 @@ func New(ctx context.Context, dsn string) (*Extractor, error) {
 	return &Extractor{db: db}, nil
 }
 
+// NewFromDump parses a plain-text SQL Server schema dump without executing it.
+func NewFromDump(ctx context.Context, path string) (database.Extractor, error) {
+	return sqlutil.NewDumpExtractor(ctx, path, constants.DialectMSSQL, constants.SchemaDBO)
+}
+
 func (e *Extractor) Close(context.Context) error { return e.db.Close() }
 
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	schemas := opts.Schemas
 	if len(schemas) == 0 {
-		schemas = []string{"dbo"}
+		schemas = []string{constants.SchemaDBO}
 	}
 	db := &schema.Database{Schemas: make([]schema.Schema, 0, len(schemas))}
 	for _, name := range schemas {

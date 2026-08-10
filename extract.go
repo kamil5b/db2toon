@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/kamil5b/db2toon/internal/database"
@@ -71,6 +73,8 @@ func Extract(ctx context.Context, req Request) (*schema.Database, error) {
 	if err != nil {
 		return nil, &Error{Operation: "extract schema", Dialect: dialect, Source: sourceKind(req), Err: err}
 	}
+	db.Dialect = canonicalDialect(dialect)
+	db.Name = databaseName(dialect, req)
 	return db, nil
 }
 
@@ -90,6 +94,10 @@ func newExtractor(ctx context.Context, dialect string, req Request) (database.Ex
 			return mysql.NewFromDump(ctx, req.Dump)
 		case "cockroachdb":
 			return cockroachdb.NewFromDump(ctx, req.Dump)
+		case "mssql", "sqlserver":
+			return mssql.NewFromDump(ctx, req.Dump)
+		case "oracle":
+			return oracle.NewFromDump(ctx, req.Dump)
 		default:
 			return nil, fmt.Errorf("unsupported database dialect %q", dialect)
 		}
@@ -119,4 +127,67 @@ func sourceKind(req Request) string {
 		return "dump"
 	}
 	return "database"
+}
+
+func canonicalDialect(dialect string) string {
+	if dialect == "sqlserver" {
+		return "mssql"
+	}
+	return dialect
+}
+
+func databaseName(dialect string, req Request) string {
+	if req.Dump != "" {
+		return trimFileExtension(filepath.Base(req.Dump))
+	}
+
+	source := strings.TrimSpace(req.DB)
+	if source == "" {
+		return ""
+	}
+	if dialect == "sqlite" || dialect == "duckdb" {
+		if source == ":memory:" {
+			return "memory"
+		}
+		return trimFileExtension(filepath.Base(source))
+	}
+	if parsed, err := url.Parse(source); err == nil && parsed.Scheme != "" {
+		for _, key := range []string{"database", "databaseName", "initial catalog"} {
+			if name := parsed.Query().Get(key); name != "" {
+				return name
+			}
+		}
+		if name := strings.Trim(parsed.Path, "/"); name != "" {
+			return filepath.Base(name)
+		}
+	}
+	if name := semicolonDatabaseName(source); name != "" {
+		return name
+	}
+	if slash := strings.LastIndex(source, "/"); slash >= 0 {
+		name := source[slash+1:]
+		if query := strings.IndexByte(name, '?'); query >= 0 {
+			name = name[:query]
+		}
+		return name
+	}
+	return ""
+}
+
+func semicolonDatabaseName(source string) string {
+	for _, field := range strings.Split(source, ";") {
+		key, value, found := strings.Cut(field, "=")
+		if !found {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(key)) {
+		case "database", "database name", "initial catalog":
+			return strings.Trim(strings.TrimSpace(value), "\"")
+		}
+	}
+	return ""
+}
+
+func trimFileExtension(name string) string {
+	return strings.TrimSuffix(name, filepath.Ext(name))
 }

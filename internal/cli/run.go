@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/service"
 )
 
@@ -23,7 +23,7 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 		dialect = strings.ToLower(args[0])
 		args = args[1:]
 	}
-	if dialect != "postgres" && dialect != "sqlite" && dialect != "duckdb" && dialect != "mysql" && dialect != "mariadb" && dialect != "cockroachdb" && dialect != "mssql" && dialect != "sqlserver" && dialect != "oracle" {
+	if _, ok := service.CapabilitiesFor(dialect); !ok {
 		return fmt.Errorf("unsupported database dialect %q (supported: postgres, sqlite, duckdb, mysql, mariadb, cockroachdb, mssql, oracle)", dialect)
 	}
 
@@ -31,15 +31,15 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	dbURL := flags.String("db", "", "database URL or local database path")
 	dumpPath := flags.String("dump", "", "plain-text SQL dump file")
 	output := flags.String("out", "", "output file (default stdout)")
-	defaultSchema := "public"
-	if dialect == "sqlite" || dialect == "duckdb" {
-		defaultSchema = "main"
+	defaultSchema := constants.SchemaPublic
+	if dialect == constants.DialectSQLite || dialect == constants.DialectDuckDB {
+		defaultSchema = constants.SchemaMain
 	}
-	if dialect == "mysql" || dialect == "mariadb" {
+	if dialect == constants.DialectMySQL || dialect == constants.DialectMariaDB {
 		defaultSchema = ""
 	}
-	if dialect == "mssql" || dialect == "sqlserver" {
-		defaultSchema = "dbo"
+	if dialect == constants.DialectMSSQL || dialect == constants.DialectSQLServer {
+		defaultSchema = constants.SchemaDBO
 	}
 	schemaName := flags.String("schema", "", "schema to extract (default "+defaultSchema+")")
 	schemaNames := flags.String("schemas", "", "comma-separated schemas to extract")
@@ -51,7 +51,7 @@ func Run(args []string, stdout io.Writer, commandName, fixedDialect string) erro
 	exampleSample := flags.Int("example-sample", 0, "number of sample rows to include per table")
 	exampleSampleOrdered := flags.Bool("example-sample-ordered", false, "order sample rows deterministically")
 	seed := flags.Int64("seed", 0, "seed for reproducible sample selection")
-	timeout := flags.Duration("timeout", 30*time.Second, "connection and extraction timeout")
+	timeout := flags.Duration("timeout", constants.DefaultTimeout, "connection and extraction timeout")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -114,7 +114,7 @@ func splitCommaSeparated(value string) []string {
 }
 
 func selectedSchemas(schemaName, schemaNames string) ([]string, error) {
-	return selectedSchemasWithDefault(schemaName, schemaNames, "public")
+	return selectedSchemasWithDefault(schemaName, schemaNames, constants.SchemaPublic)
 }
 
 func selectedSchemasWithDefault(schemaName, schemaNames, defaultSchema string) ([]string, error) {

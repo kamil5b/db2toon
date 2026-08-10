@@ -9,10 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/service"
 )
-
-const protocolVersion = "2024-11-05"
 
 type Server struct {
 	in  io.Reader
@@ -43,19 +42,19 @@ type rpcResponse struct {
 
 func (s *Server) Serve(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
-	scanner.Buffer(make([]byte, 1024), 1<<20)
+	scanner.Buffer(make([]byte, constants.InitialScannerBuffer), constants.MaximumScannerTokenSize)
 	var wg sync.WaitGroup
 	for scanner.Scan() {
 		var req rpcRequest
 		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
-			if err := s.writeResponse(rpcResponse{JSONRPC: "2.0", Error: rpcError(-32700, "invalid JSON")}); err != nil {
+			if err := s.writeResponse(rpcResponse{JSONRPC: constants.JSONRPCVersion, Error: rpcError(constants.JSONRPCParseError, "invalid JSON")}); err != nil {
 				return err
 			}
 			continue
 		}
-		if req.JSONRPC != "2.0" || req.Method == "" {
+		if req.JSONRPC != constants.JSONRPCVersion || req.Method == "" {
 			if !isNotification(req) {
-				if err := s.writeResponse(rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: rpcError(-32600, "invalid request")}); err != nil {
+				if err := s.writeResponse(rpcResponse{JSONRPC: constants.JSONRPCVersion, ID: req.ID, Error: rpcError(constants.JSONRPCInvalidRequest, "invalid request")}); err != nil {
 					return err
 				}
 			}
@@ -119,7 +118,7 @@ func (s *Server) handleNotification(req rpcRequest) {
 func isNotification(req rpcRequest) bool { return len(req.ID) == 0 || string(req.ID) == "null" }
 
 func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
-	response := rpcResponse{JSONRPC: "2.0", ID: req.ID}
+	response := rpcResponse{JSONRPC: constants.JSONRPCVersion, ID: req.ID}
 	switch req.Method {
 	case "initialize":
 		var params struct {
@@ -128,21 +127,21 @@ func (s *Server) handle(ctx context.Context, req rpcRequest) rpcResponse {
 			ClientInfo      map[string]any `json:"clientInfo"`
 			Meta            map[string]any `json:"_meta"`
 		}
-		if err := decodeStrict(req.Params, &params); err != nil || (params.ProtocolVersion != "" && params.ProtocolVersion != protocolVersion) {
-			response.Error = rpcError(-32602, "unsupported protocol version")
+		if err := decodeStrict(req.Params, &params); err != nil || (params.ProtocolVersion != "" && params.ProtocolVersion != constants.MCPProtocolVersion) {
+			response.Error = rpcError(constants.JSONRPCInvalidParams, "unsupported protocol version")
 			return response
 		}
 		response.Result = map[string]any{
-			"protocolVersion": protocolVersion,
+			"protocolVersion": constants.MCPProtocolVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]string{"name": "db2toon", "version": "1"},
+			"serverInfo":      map[string]string{"name": constants.MCPServerName, "version": constants.MCPServerVersion},
 		}
 	case "tools/list":
 		response.Result = map[string]any{"tools": []any{toolDefinition()}}
 	case "tools/call":
 		response.Result = s.callTool(ctx, req.Params)
 	default:
-		response.Error = rpcError(-32601, "method not found")
+		response.Error = rpcError(constants.JSONRPCMethodNotFound, "method not found")
 	}
 	return response
 }
@@ -168,7 +167,7 @@ func toolDefinition() map[string]any {
 		},
 	}
 	return map[string]any{
-		"name":        "db2toon.extract_schema",
+		"name":        constants.MCPExtractSchemaTool,
 		"description": "Extract a database schema in compact TOON format from either a live database or a plain-text SQL dump using read-only metadata. Provide exactly one of db and dump. Dump contents are parsed offline and never executed. Use this tool for tables, columns, relationships, constraints, indexes, views, or database structure. Schema-only extraction is the default. Request example rows only when explicitly asked.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false, "required": []string{"dialect"},
@@ -177,7 +176,7 @@ func toolDefinition() map[string]any {
 				map[string]any{"required": []string{"dump"}, "not": map[string]any{"required": []string{"db"}}},
 			},
 			"properties": map[string]any{
-				"dialect": map[string]any{"type": "string", "enum": []string{"postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb", "mssql", "sqlserver", "oracle"}, "description": "Database engine."},
+				"dialect": map[string]any{"type": "string", "enum": []string{constants.DialectPostgres, constants.DialectSQLite, constants.DialectDuckDB, constants.DialectMySQL, constants.DialectMariaDB, constants.DialectCockroachDB, constants.DialectMSSQL, constants.DialectSQLServer, constants.DialectOracle}, "description": "Database engine."},
 				"db":      map[string]any{"type": "string", "minLength": 1, "description": "Database connection URL. Credentials are never returned in tool output or errors."},
 				"dump":    map[string]any{"type": "string", "minLength": 1, "description": "Path to a supported plain-text SQL dump. Dump contents are parsed offline and never executed."},
 				"options": options,
@@ -192,7 +191,7 @@ func (s *Server) callTool(ctx context.Context, raw json.RawMessage) map[string]a
 		Arguments json.RawMessage `json:"arguments"`
 		Meta      map[string]any  `json:"_meta"`
 	}
-	if err := decodeStrict(raw, &call); err != nil || call.Name != "db2toon.extract_schema" {
+	if err := decodeStrict(raw, &call); err != nil || call.Name != constants.MCPExtractSchemaTool {
 		return toolError(&service.Error{Code: "INVALID_ARGUMENT", Message: "invalid tool call", Retryable: false})
 	}
 	var req service.Request

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
@@ -26,6 +27,9 @@ func Encode(w io.Writer, db *schema.Database) error {
 		return fmt.Errorf("toon: nil database")
 	}
 	e := encoder{w: w, multipleSchemas: len(db.Schemas) > 1}
+	if err := e.database(db); err != nil {
+		return err
+	}
 	if err := e.extensions(db.Extensions); err != nil {
 		return err
 	}
@@ -40,6 +44,26 @@ func Encode(w io.Writer, db *schema.Database) error {
 		}
 	}
 	return nil
+}
+
+func (e encoder) database(db *schema.Database) error {
+	if db.Dialect == "" && db.Name == "" {
+		return nil
+	}
+	if err := e.printf("@database"); err != nil {
+		return err
+	}
+	if db.Name != "" {
+		if err := e.printf(" %s", identifier(db.Name)); err != nil {
+			return err
+		}
+	}
+	if db.Dialect != "" {
+		if err := e.printf(" {dialect=%s}", identifier(strings.ToLower(db.Dialect))); err != nil {
+			return err
+		}
+	}
+	return e.printf("\n\n")
 }
 
 func (e encoder) extensions(extensions []schema.Extension) error {
@@ -197,7 +221,7 @@ func (e encoder) schemaObjects(namespace schema.Schema) error {
 }
 
 func (e encoder) schemaObjectName(namespace, name string) string {
-	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+	if e.multipleSchemas || (namespace != "" && namespace != constants.SchemaPublic) {
 		return identifier(namespace) + "." + identifier(name)
 	}
 	return identifier(name)
@@ -215,7 +239,7 @@ func (e encoder) printf(format string, args ...any) error {
 
 func (e encoder) table(namespace string, table schema.Table) error {
 	name := identifier(table.Name)
-	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+	if e.multipleSchemas || (namespace != "" && namespace != constants.SchemaPublic) {
 		name = identifier(namespace) + "." + name
 	}
 	if err := e.printf("[%s]", name); err != nil {
