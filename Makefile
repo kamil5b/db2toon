@@ -8,7 +8,7 @@ OUT ?= $(OUTPUT_DIR)/schema.toon
 DB_URL ?=
 OPTS ?=
 
-.PHONY: build test test-integration test-integration-mysql test-integration-cockroachdb test-all benchmark-dbml run
+.PHONY: build test test-integration test-integration-mysql test-integration-mssql test-integration-oracle test-integration-cockroachdb test-integration-duckdb test-all benchmark-dbml run
 
 build:
 	@mkdir -p $(OUTPUT_DIR)
@@ -23,13 +23,25 @@ test:
 test-integration:
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/postgres
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mysql
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mssql
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/cockroachdb
+	$(MAKE) test-integration-duckdb
 
 test-integration-cockroachdb:
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/cockroachdb
 
+test-integration-duckdb:
+	arch=$$(uname -m); case "$$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac; docker build --build-arg TARGETARCH=$$arch -f internal/database/duckdb/Dockerfile.test -t db2toon-duckdb-test .
+	docker run --rm -v "$$(pwd):/workspace" -w /workspace db2toon-duckdb-test env CGO_ENABLED=0 go test -v ./internal/database/duckdb
+
 test-integration-mysql:
 	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mysql
+
+test-integration-mssql:
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/mssql
+
+test-integration-oracle:
+	CGO_ENABLED=0 $(GO) test -v -tags=integration ./internal/database/oracle
 
 test-all: test test-integration
 

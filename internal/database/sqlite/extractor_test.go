@@ -72,6 +72,28 @@ CREATE VIEW account_view AS SELECT id, email FROM accounts;
 	}
 }
 
+func TestExtractTriggers(t *testing.T) {
+	e := newTestExtractor(t)
+	if _, err := e.ExtractorDB().Exec(`
+CREATE TABLE jobs (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+CREATE TRIGGER jobs_validate_name BEFORE INSERT ON jobs
+BEGIN
+  SELECT CASE WHEN NEW.name = '' THEN RAISE(ABORT, 'name is required') END;
+END;
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := e.Extract(context.Background(), database.ExtractOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := findTable(db.Schemas[0].Tables, "jobs")
+	if len(jobs.Triggers) != 1 || jobs.Triggers[0].Name != "jobs_validate_name" || jobs.Triggers[0].Timing != "BEFORE" || !sameStrings(jobs.Triggers[0].Events, []string{"INSERT"}) || !jobs.Triggers[0].Enabled {
+		t.Fatalf("triggers: %#v", jobs.Triggers)
+	}
+}
+
 func TestExtractCompositeKeysAndConstraints(t *testing.T) {
 	e := newTestExtractor(t)
 	if _, err := e.ExtractorDB().Exec(`

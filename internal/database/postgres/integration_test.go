@@ -58,6 +58,7 @@ func TestPostgresSchemaToToon(t *testing.T) {
 	const fixture = `
 CREATE EXTENSION vector;
 CREATE EXTENSION btree_gist;
+CREATE TYPE job_status AS ENUM ('queued', 'running', 'done');
 
 CREATE TABLE users (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -66,6 +67,16 @@ CREATE TABLE users (
 );
 COMMENT ON TABLE users IS 'Application users';
 COMMENT ON COLUMN users.email IS 'Login email';
+CREATE FUNCTION normalize_display_name() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.display_name := trim(NEW.display_name);
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER users_normalize_display_name
+    BEFORE INSERT OR UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION normalize_display_name();
 
 CREATE TABLE posts (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -204,8 +215,20 @@ INSERT INTO cross_schema_records (id, organization_id) VALUES (1, 1);
 	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 14 {
 		t.Fatalf("unexpected database: %#v", db)
 	}
+	if !hasExtension(db.Extensions, "vector") || !hasExtension(db.Extensions, "btree_gist") {
+		t.Fatalf("extensions: %#v", db.Extensions)
+	}
 	posts := findTable(t, db.Schemas[0].Tables, "posts")
 	users := findTable(t, db.Schemas[0].Tables, "users")
+	if len(db.Schemas[0].Enums) != 1 || db.Schemas[0].Enums[0].Name != "job_status" || strings.Join(db.Schemas[0].Enums[0].Values, ",") != "queued,running,done" {
+		t.Fatalf("enums: %#v", db.Schemas[0].Enums)
+	}
+	if len(db.Schemas[0].Routines) != 1 || db.Schemas[0].Routines[0].Name != "normalize_display_name" || db.Schemas[0].Routines[0].Kind != "function" {
+		t.Fatalf("routines: %#v", db.Schemas[0].Routines)
+	}
+	if len(users.Triggers) != 1 || users.Triggers[0].Name != "users_normalize_display_name" || users.Triggers[0].Timing != "BEFORE" || strings.Join(users.Triggers[0].Events, ",") != "INSERT,UPDATE" {
+		t.Fatalf("triggers: %#v", users.Triggers)
+	}
 	if posts.PrimaryKey == nil || strings.Join(posts.PrimaryKey.Columns, ",") != "id" {
 		t.Fatalf("posts primary key: %#v", posts.PrimaryKey)
 	}
@@ -349,6 +372,9 @@ INSERT INTO cross_schema_records (id, organization_id) VALUES (1, 1);
 	}
 	toonOutput := output.String()
 	t.Logf("TOON output:\n%s", toonOutput)
+	if !strings.HasPrefix(toonOutput, "@extensions\n") || !strings.Contains(toonOutput, "  vector ") {
+		t.Fatalf("extensions missing from top of TOON output:\n%s", toonOutput)
+	}
 	if !strings.Contains(toonOutput, "@example[2]{id,email,display_name}:\n  1,alice@example.com,Alice\n  2,bob@example.com,Bob") {
 		t.Fatalf("users examples missing from TOON output:\n%s", toonOutput)
 	}
@@ -524,4 +550,13 @@ func findIndex(t *testing.T, indexes []schema.Index, name string) schema.Index {
 	}
 	t.Fatalf("index %q not found", name)
 	return schema.Index{}
+}
+
+func hasExtension(extensions []schema.Extension, name string) bool {
+	for _, extension := range extensions {
+		if extension.Name == name {
+			return true
+		}
+	}
+	return false
 }

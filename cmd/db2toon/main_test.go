@@ -14,9 +14,16 @@ func TestRunRequiresDialect(t *testing.T) {
 }
 
 func TestRunRejectsUnsupportedDialect(t *testing.T) {
-	err := cliRun([]string{"oracle", "-db", "unused"})
-	if err == nil || !strings.Contains(err.Error(), `unsupported database dialect "oracle"`) {
+	err := cliRun([]string{"snowflake", "-db", "unused"})
+	if err == nil || !strings.Contains(err.Error(), `unsupported database dialect "snowflake"`) {
 		t.Fatalf("run() error = %v, want unsupported dialect error", err)
+	}
+}
+
+func TestRunAcceptsMSSQL(t *testing.T) {
+	err := cliRun([]string{"mssql", "-db", "invalid"})
+	if err == nil || strings.Contains(err.Error(), "unsupported database dialect") {
+		t.Fatalf("run() error = %v, want connection failure after accepting mssql", err)
 	}
 }
 

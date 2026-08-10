@@ -26,7 +26,13 @@ func Encode(w io.Writer, db *schema.Database) error {
 		return fmt.Errorf("toon: nil database")
 	}
 	e := encoder{w: w, multipleSchemas: len(db.Schemas) > 1}
+	if err := e.extensions(db.Extensions); err != nil {
+		return err
+	}
 	for _, namespace := range db.Schemas {
+		if err := e.schemaObjects(namespace); err != nil {
+			return err
+		}
 		for _, table := range namespace.Tables {
 			if err := e.table(namespace.Name, table); err != nil {
 				return err
@@ -34,6 +40,167 @@ func Encode(w io.Writer, db *schema.Database) error {
 		}
 	}
 	return nil
+}
+
+func (e encoder) extensions(extensions []schema.Extension) error {
+	if len(extensions) == 0 {
+		return nil
+	}
+	if err := e.printf("@extensions\n"); err != nil {
+		return err
+	}
+	for _, extension := range extensions {
+		attributes := make([]string, 0, 2)
+		if extension.Version != "" {
+			attributes = append(attributes, "version="+extension.Version)
+		}
+		if extension.Schema != "" {
+			attributes = append(attributes, "schema="+identifier(extension.Schema))
+		}
+		if err := e.printf("  %s", identifier(extension.Name)); err != nil {
+			return err
+		}
+		if len(attributes) > 0 {
+			if err := e.printf(" {%s}", strings.Join(attributes, ",")); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
+	return e.printf("\n")
+}
+
+func (e encoder) schemaObjects(namespace schema.Schema) error {
+	for _, enum := range namespace.Enums {
+		if err := e.printf("@enum %s:\n", e.schemaObjectName(namespace.Name, enum.Name)); err != nil {
+			return err
+		}
+		for _, value := range enum.Values {
+			if err := e.printf("  %s\n", identifier(value)); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
+	for _, typ := range namespace.Types {
+		if err := e.printf("@type %s %s", e.schemaObjectName(namespace.Name, typ.Name), strings.ToLower(typ.Kind)); err != nil {
+			return err
+		}
+		if typ.NativeType != "" {
+			if err := e.printf(" -> %s", shrink(typ.NativeType)); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n\n"); err != nil {
+			return err
+		}
+	}
+	for _, sequence := range namespace.Sequences {
+		if err := e.printf("@sequence %s %s", e.schemaObjectName(namespace.Name, sequence.Name), shrink(sequence.NativeType)); err != nil {
+			return err
+		}
+		attributes := make([]string, 0, 5)
+		if sequence.Start != "" {
+			attributes = append(attributes, "start="+sequence.Start)
+		}
+		if sequence.Increment != "" {
+			attributes = append(attributes, "increment="+sequence.Increment)
+		}
+		if sequence.Minimum != "" {
+			attributes = append(attributes, "min="+sequence.Minimum)
+		}
+		if sequence.Maximum != "" {
+			attributes = append(attributes, "max="+sequence.Maximum)
+		}
+		if sequence.Cyclic {
+			attributes = append(attributes, "cycle")
+		}
+		if len(attributes) > 0 {
+			if err := e.printf(" {%s}", strings.Join(attributes, ",")); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n\n"); err != nil {
+			return err
+		}
+	}
+	for _, synonym := range namespace.Synonyms {
+		if err := e.printf("@synonym %s -> %s\n\n", e.schemaObjectName(namespace.Name, synonym.Name), singleLine(synonym.Target)); err != nil {
+			return err
+		}
+	}
+	if len(namespace.Objects) > 0 {
+		if err := e.printf("@objects\n"); err != nil {
+			return err
+		}
+		for _, object := range namespace.Objects {
+			if err := e.printf("  %s %s", strings.ToLower(object.Kind), e.schemaObjectName(namespace.Name, object.Name)); err != nil {
+				return err
+			}
+			if len(object.Properties) > 0 {
+				properties := make([]string, 0, len(object.Properties))
+				for _, property := range object.Properties {
+					properties = append(properties, identifier(property.Name)+"="+singleLine(property.Value))
+				}
+				if err := e.printf(" {%s}", strings.Join(properties, ",")); err != nil {
+					return err
+				}
+			}
+			if err := e.printf("\n"); err != nil {
+				return err
+			}
+			for _, line := range commentLines(object.Definition) {
+				if err := e.printf("    %s\n", line); err != nil {
+					return err
+				}
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
+	for _, routine := range namespace.Routines {
+		kind := strings.ToLower(routine.Kind)
+		if kind == "" {
+			kind = "function"
+		}
+		if err := e.printf("@routine %s %s(%s)", kind, e.schemaObjectName(namespace.Name, routine.Name), singleLine(routine.Arguments)); err != nil {
+			return err
+		}
+		if routine.ReturnType != "" {
+			if err := e.printf(" -> %s", shrink(routine.ReturnType)); err != nil {
+				return err
+			}
+		}
+		if routine.Language != "" {
+			if err := e.printf(" {language=%s}", identifier(strings.ToLower(routine.Language))); err != nil {
+				return err
+			}
+		}
+		if err := e.printf(":\n"); err != nil {
+			return err
+		}
+		for _, line := range commentLines(routine.Definition) {
+			if err := e.printf("  %s\n", line); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e encoder) schemaObjectName(namespace, name string) string {
+	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+		return identifier(namespace) + "." + identifier(name)
+	}
+	return identifier(name)
 }
 
 type encoder struct {
@@ -51,12 +218,30 @@ func (e encoder) table(namespace string, table schema.Table) error {
 	if e.multipleSchemas || (namespace != "" && namespace != "public") {
 		name = identifier(namespace) + "." + name
 	}
-	if err := e.printf("[%s]\n", name); err != nil {
+	if err := e.printf("[%s]", name); err != nil {
+		return err
+	}
+	if table.Kind != "" && table.Kind != "table" {
+		if err := e.printf(" {%s}", strings.ToLower(table.Kind)); err != nil {
+			return err
+		}
+	}
+	if err := e.printf("\n"); err != nil {
 		return err
 	}
 	for _, line := range commentLines(table.Comment) {
 		if err := e.printf("# %s\n", line); err != nil {
 			return err
+		}
+	}
+	if table.Definition != "" {
+		if err := e.printf("@definition\n"); err != nil {
+			return err
+		}
+		for _, line := range commentLines(table.Definition) {
+			if err := e.printf("  %s\n", line); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -166,6 +351,34 @@ func (e encoder) table(namespace string, table schema.Table) error {
 			definition := indexDefinition(index)
 			if err := e.printf("  %s: %s\n", identifier(index.Name), definition); err != nil {
 				return err
+			}
+		}
+	}
+	if len(table.Triggers) > 0 {
+		if err := e.printf("@triggers\n"); err != nil {
+			return err
+		}
+		for _, trigger := range table.Triggers {
+			timing := strings.ToLower(trigger.Timing)
+			events := make([]string, len(trigger.Events))
+			for i, event := range trigger.Events {
+				events[i] = strings.ToLower(event)
+			}
+			if err := e.printf("  %s: %s %s", identifier(trigger.Name), timing, strings.Join(events, ",")); err != nil {
+				return err
+			}
+			if !trigger.Enabled {
+				if err := e.printf(" {disabled}"); err != nil {
+					return err
+				}
+			}
+			if err := e.printf("\n"); err != nil {
+				return err
+			}
+			for _, line := range commentLines(trigger.Definition) {
+				if err := e.printf("    %s\n", line); err != nil {
+					return err
+				}
 			}
 		}
 	}

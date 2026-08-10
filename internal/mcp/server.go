@@ -177,7 +177,7 @@ func toolDefinition() map[string]any {
 				map[string]any{"required": []string{"dump"}, "not": map[string]any{"required": []string{"db"}}},
 			},
 			"properties": map[string]any{
-				"dialect": map[string]any{"type": "string", "enum": []string{"postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb"}, "description": "Database engine."},
+				"dialect": map[string]any{"type": "string", "enum": []string{"postgres", "sqlite", "duckdb", "mysql", "mariadb", "cockroachdb", "mssql", "sqlserver", "oracle"}, "description": "Database engine."},
 				"db":      map[string]any{"type": "string", "minLength": 1, "description": "Database connection URL. Credentials are never returned in tool output or errors."},
 				"dump":    map[string]any{"type": "string", "minLength": 1, "description": "Path to a supported plain-text SQL dump. Dump contents are parsed offline and never executed."},
 				"options": options,

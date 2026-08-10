@@ -2,17 +2,21 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/kamil5b/db2toon/internal/database"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 type Extractor struct {
-	conn *pgx.Conn
+	conn      *pgx.Conn
+	cockroach bool
 }
 
 func New(ctx context.Context, dsn string) (*Extractor, error) {
@@ -21,6 +25,17 @@ func New(ctx context.Context, dsn string) (*Extractor, error) {
 		return nil, fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 	return &Extractor{conn: conn}, nil
+}
+
+// NewCockroach creates an extractor for CockroachDB's PostgreSQL-compatible
+// wire protocol and its catalog-specific schema inspection statements.
+func NewCockroach(ctx context.Context, dsn string) (*Extractor, error) {
+	e, err := New(ctx, dsn)
+	if err != nil {
+		return nil, err
+	}
+	e.cockroach = true
+	return e, nil
 }
 
 func (e *Extractor) Close(ctx context.Context) error {
@@ -86,10 +101,43 @@ ORDER BY n.nspname, c.relname`, schemas, relkinds)
 	}
 
 	db := &schema.Database{}
+	if err := e.loadExtensions(ctx, db); err != nil {
+		return nil, err
+	}
 	for _, name := range order {
+		if err := e.loadEnums(ctx, bySchema[name]); err != nil {
+			return nil, err
+		}
+		if err := e.loadRoutines(ctx, bySchema[name]); err != nil {
+			return nil, err
+		}
 		db.Schemas = append(db.Schemas, *bySchema[name])
 	}
 	return db, nil
+}
+
+func (e *Extractor) loadExtensions(ctx context.Context, db *schema.Database) error {
+	if e.cockroach {
+		// CockroachDB has no PostgreSQL-compatible extension registry.
+		return nil
+	}
+	rows, err := e.conn.Query(ctx, `
+SELECT ext.extname, ext.extversion, n.nspname
+FROM pg_extension ext
+JOIN pg_namespace n ON n.oid = ext.extnamespace
+ORDER BY ext.extname`)
+	if err != nil {
+		return fmt.Errorf("query extensions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var extension schema.Extension
+		if err := rows.Scan(&extension.Name, &extension.Version, &extension.Schema); err != nil {
+			return fmt.Errorf("scan extension: %w", err)
+		}
+		db.Extensions = append(db.Extensions, extension)
+	}
+	return rows.Err()
 }
 
 func (e *Extractor) populateTable(ctx context.Context, table *schema.Table, opts database.ExtractOptions) error {
@@ -114,10 +162,74 @@ func (e *Extractor) populateTable(ctx context.Context, table *schema.Table, opts
 	if err := e.loadIndexes(ctx, table); err != nil {
 		return err
 	}
+	if err := e.loadTriggers(ctx, table); err != nil {
+		return err
+	}
 	if opts.ExampleSample > 0 && !excludedTable(*table, opts.ExcludeExampleTables) {
 		return e.loadExample(ctx, table, opts)
 	}
 	return nil
+}
+
+func (e *Extractor) loadEnums(ctx context.Context, namespace *schema.Schema) error {
+	rows, err := e.conn.Query(ctx, `
+SELECT typ.typname, enum.enumlabel
+FROM pg_type typ
+JOIN pg_namespace n ON n.oid = typ.typnamespace
+JOIN pg_enum enum ON enum.enumtypid = typ.oid
+WHERE n.nspname = $1
+ORDER BY typ.typname, enum.enumsortorder`, namespace.Name)
+	if err != nil {
+		return fmt.Errorf("query enums for schema %s: %w", namespace.Name, err)
+	}
+	defer rows.Close()
+	positions := map[string]int{}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return fmt.Errorf("scan enum for schema %s: %w", namespace.Name, err)
+		}
+		position, ok := positions[name]
+		if !ok {
+			position = len(namespace.Enums)
+			positions[name] = position
+			namespace.Enums = append(namespace.Enums, schema.Enum{Name: name})
+		}
+		namespace.Enums[position].Values = append(namespace.Enums[position].Values, value)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) loadRoutines(ctx context.Context, namespace *schema.Schema) error {
+	rows, err := e.conn.Query(ctx, `
+SELECT p.proname,
+       CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END,
+       pg_get_function_arguments(p.oid),
+       pg_get_function_result(p.oid),
+       l.lanname,
+       pg_get_functiondef(p.oid)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_language l ON l.oid = p.prolang
+WHERE n.nspname = $1
+  AND p.prokind IN ('f', 'p')
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_depend d
+      WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+  )
+ORDER BY p.proname, p.oid`, namespace.Name)
+	if err != nil {
+		return fmt.Errorf("query routines for schema %s: %w", namespace.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var routine schema.Routine
+		if err := rows.Scan(&routine.Name, &routine.Kind, &routine.Arguments, &routine.ReturnType, &routine.Language, &routine.Definition); err != nil {
+			return fmt.Errorf("scan routine for schema %s: %w", namespace.Name, err)
+		}
+		namespace.Routines = append(namespace.Routines, routine)
+	}
+	return rows.Err()
 }
 
 func excludedTable(table schema.Table, exclusions []string) bool {
@@ -396,4 +508,114 @@ ORDER BY idx.relname`, table.Schema, table.Name)
 		table.Indexes = append(table.Indexes, i)
 	}
 	return rows.Err()
+}
+
+func (e *Extractor) loadTriggers(ctx context.Context, table *schema.Table) error {
+	if e.cockroach {
+		return e.loadCockroachTriggers(ctx, table)
+	}
+	rows, err := e.conn.Query(ctx, `
+SELECT tg.tgname, tg.tgtype::int, tg.tgenabled <> 'D', pg_get_triggerdef(tg.oid)
+FROM pg_trigger tg
+JOIN pg_class c ON c.oid = tg.tgrelid
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = $1 AND c.relname = $2 AND NOT tg.tgisinternal
+	ORDER BY tg.tgname`, table.Schema, table.Name)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "42883" {
+			// CockroachDB exposes pg_trigger but not pg_get_triggerdef. Its
+			// trigger definitions therefore cannot be represented faithfully.
+			return nil
+		}
+		return fmt.Errorf("query triggers for %s.%s: %w", table.Schema, table.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var trigger schema.Trigger
+		var triggerType int
+		if err := rows.Scan(&trigger.Name, &triggerType, &trigger.Enabled, &trigger.Definition); err != nil {
+			return fmt.Errorf("scan trigger for %s.%s: %w", table.Schema, table.Name, err)
+		}
+		trigger.Timing = postgresTriggerTiming(triggerType)
+		trigger.Events = postgresTriggerEvents(triggerType)
+		table.Triggers = append(table.Triggers, trigger)
+	}
+	return rows.Err()
+}
+
+var cockroachTriggerHeader = regexp.MustCompile(`(?i)\b(BEFORE|AFTER)\s+(.+?)\s+ON\s`)
+
+func (e *Extractor) loadCockroachTriggers(ctx context.Context, table *schema.Table) error {
+	qualifiedTable := pgx.Identifier{table.Schema, table.Name}.Sanitize()
+	rows, err := e.conn.Query(ctx, "SHOW TRIGGERS FROM "+qualifiedTable)
+	if err != nil {
+		return fmt.Errorf("query triggers for %s.%s: %w", table.Schema, table.Name, err)
+	}
+	var triggers []schema.Trigger
+	for rows.Next() {
+		var trigger schema.Trigger
+		if err := rows.Scan(&trigger.Name, &trigger.Enabled); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan trigger for %s.%s: %w", table.Schema, table.Name, err)
+		}
+		triggers = append(triggers, trigger)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, trigger := range triggers {
+		qualifiedTrigger := pgx.Identifier{trigger.Name}.Sanitize()
+		var objectName string
+		if err := e.conn.QueryRow(ctx, "SHOW CREATE TRIGGER "+qualifiedTrigger+" ON "+qualifiedTable).Scan(&objectName, &trigger.Definition); err != nil {
+			return fmt.Errorf("query trigger definition for %s.%s: %w", table.Schema, trigger.Name, err)
+		}
+		trigger.Timing, trigger.Events = cockroachTriggerDetails(trigger.Definition)
+		table.Triggers = append(table.Triggers, trigger)
+	}
+	return rows.Err()
+}
+
+func cockroachTriggerDetails(definition string) (string, []string) {
+	match := cockroachTriggerHeader.FindStringSubmatch(definition)
+	if match == nil {
+		return "", nil
+	}
+	var events []string
+	for _, token := range strings.Fields(strings.ToUpper(match[2])) {
+		if token == "INSERT" || token == "UPDATE" || token == "DELETE" {
+			events = append(events, token)
+		}
+	}
+	return strings.ToUpper(match[1]), events
+}
+
+func postgresTriggerTiming(triggerType int) string {
+	switch {
+	case triggerType&64 != 0:
+		return "INSTEAD OF"
+	case triggerType&2 != 0:
+		return "BEFORE"
+	default:
+		return "AFTER"
+	}
+}
+
+func postgresTriggerEvents(triggerType int) []string {
+	var events []string
+	if triggerType&4 != 0 {
+		events = append(events, "INSERT")
+	}
+	if triggerType&16 != 0 {
+		events = append(events, "UPDATE")
+	}
+	if triggerType&8 != 0 {
+		events = append(events, "DELETE")
+	}
+	if triggerType&32 != 0 {
+		events = append(events, "TRUNCATE")
+	}
+	return events
 }

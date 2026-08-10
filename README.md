@@ -4,15 +4,17 @@ A CLI tool that converts database schemas into the Toon schema definition format
 
 ## Overview
 
-`db2toon` connects to a database and extracts schema information (tables, columns, types, constraints, indexes, and examples), then converts it into the human-readable Toon format for database design documentation and visualization. PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, and CockroachDB are supported. `pg2toon` remains a PostgreSQL compatibility command.
+`db2toon` connects to a database and extracts schema information (tables, columns, types, constraints, indexes, routines, triggers, and examples), then converts it into the human-readable Toon format for database design documentation and visualization. PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, Microsoft SQL Server, and Oracle are supported. `pg2toon` remains a PostgreSQL compatibility command.
 
 ## Features
 
-- **Schema Extraction**: Automatically extracts tables, columns, and metadata from PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, and CockroachDB
+- **Schema Extraction**: Automatically extracts tables, columns, and metadata from PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, and Microsoft SQL Server
 - **Type Normalization**: Simplifies PostgreSQL types (e.g., `character varying` → `varchar`)
 - **Relationship Mapping**: Converts foreign key constraints to inline references or multi-column references
 - **Comment Preservation**: Includes comments where the database exposes them; SQLite does not have catalog comments
 - **Index Documentation**: Extracts and documents database indexes
+- **Database Objects**: Preserves supported enums, triggers, routines, and
+  installed extensions in explicit TOON sections
 - **Cross-Platform**: Builds without CGO for Linux, macOS, and Windows (amd64 and arm64)
 - **DBML Adapter**: Converts DBML files (or standard input) into the same TOON format
 
@@ -74,7 +76,7 @@ CGO_ENABLED=0 go build -o output/db2toon-mcp ./cmd/db2toon-mcp
 ```
 
 The server exposes `db2toon.extract_schema`. Its required argument is
-`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, or `cockroachdb`).
+`dialect` (`postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, `sqlserver`, or `oracle`).
 Provide exactly one of `db` or `dump`; optional extraction settings are
 supplied in an `options` object. Dump files are parsed offline and never
 executed. The tool is read-only, uses a 30-second default timeout, and limits
@@ -90,13 +92,19 @@ or results.
 # SQLite database file
 ./db2toon sqlite -db ./schema.db
 
-# Plain-text SQL dump (all supported SQL dialects)
+# Plain-text SQL dump (PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, and CockroachDB)
 ./db2toon postgres -dump ./schema.sql
 ./db2toon sqlite -dump ./schema.sql
 ./db2toon mysql -dump ./schema.sql
 
 # DuckDB database file (requires libduckdb at runtime)
 ./db2toon duckdb -db ./analytics.duckdb
+
+# Microsoft SQL Server (defaults to dbo)
+./db2toon mssql -db 'sqlserver://sa:password@localhost:1433?database=app&encrypt=disable'
+
+# Oracle (defaults to the current schema)
+./db2toon oracle -db 'oracle://app:password@localhost:1521/FREEPDB1'
 
 # Compatibility command; PostgreSQL is selected automatically.
 ./pg2toon -db "postgresql://user:password@localhost/dbname"
@@ -133,7 +141,7 @@ Select multiple schemas, include partitioned tables, and change the default
 ./db2toon postgres -db "$DATABASE_URL" -schema audit
 ./db2toon postgres -db "$DATABASE_URL" -schemas public,audit -include-partitioned -timeout 1m
 
-# SQLite and DuckDB default to the `main` schema.
+# SQLite and DuckDB default to the `main` schema. SQL Server defaults to `dbo`.
 ./db2toon sqlite -db ./schema.db -schema main
 ./db2toon duckdb -db ./analytics.duckdb -schema analytics
 ```
@@ -142,9 +150,9 @@ Select multiple schemas, include partitioned tables, and change the default
 
 - `-db string`: Database connection URL or local database path; mutually exclusive with `-dump`
 - `-dump string`: Plain-text SQL dump path; mutually exclusive with `-db`
-- `dialect`: `postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, or `cockroachdb` for `db2toon`; `pg2toon` always uses PostgreSQL
+- `dialect`: `postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, or `sqlserver` for `db2toon`; `pg2toon` always uses PostgreSQL
 - `-out string`: Output file path (optional, defaults to stdout)
-- `-schema string`: A single schema to extract (defaults to `public` for PostgreSQL and `main` for SQLite/DuckDB)
+- `-schema string`: A single schema to extract (defaults to `public` for PostgreSQL, `main` for SQLite/DuckDB, and `dbo` for SQL Server)
 - `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`
 - `-include-partitioned`: Include PostgreSQL partitioned tables
 - `-include-views`: Include supported views
@@ -157,7 +165,8 @@ Select multiple schemas, include partitioned tables, and change the default
 - `-timeout duration`: Connection and extraction timeout (defaults to `30s`)
 
 Dump mode currently supports plain-text SQL exports for PostgreSQL, SQLite,
-DuckDB, MySQL/MariaDB, and CockroachDB. Common tables, columns, constraints,
+DuckDB, MySQL/MariaDB, and CockroachDB. SQL Server currently supports live
+connections only. Common tables, columns, constraints,
 indexes, comments, and bounded `INSERT` examples are parsed without executing
 the dump. Triggers and other metadata without a canonical TOON representation
 are ignored.
@@ -217,7 +226,7 @@ The Toon format provides a clean, human-readable schema definition:
 ## Requirements
 
 - Go 1.26.0 or later
-- PostgreSQL 9.4+ (for JSON aggregation functions), SQLite, DuckDB, MySQL/MariaDB, or CockroachDB
+- PostgreSQL 9.4+ (for JSON aggregation functions), SQLite, DuckDB, MySQL/MariaDB, CockroachDB, or Microsoft SQL Server 2022+
 - A valid database connection string or local database path
 - DuckDB also requires a compatible `libduckdb` shared library at runtime
 
