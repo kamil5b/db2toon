@@ -56,20 +56,21 @@ func (e *Extractor) extractSchema(ctx context.Context, owner string, opts databa
 	if err := e.loadRoutines(ctx, &s); err != nil {
 		return s, err
 	}
-	rows, err := e.db.QueryContext(ctx, `SELECT o.object_name,o.object_type,NVL(c.comments,'') FROM all_objects o LEFT JOIN all_tab_comments c ON c.owner=o.owner AND c.table_name=o.object_name WHERE o.owner=:1 AND o.object_type IN ('TABLE','VIEW') AND (:2=1 OR o.object_type='TABLE') ORDER BY o.object_name`, owner, boolToInt(opts.IncludeViews))
+	rows, err := e.db.QueryContext(ctx, `SELECT o.object_name,o.object_type,c.comments FROM all_objects o LEFT JOIN all_tab_comments c ON c.owner=o.owner AND c.table_name=o.object_name WHERE o.owner=:1 AND o.object_type IN ('TABLE','VIEW') AND (:2=1 OR o.object_type='TABLE') ORDER BY o.object_name`, owner, boolToInt(opts.IncludeViews))
 	if err != nil {
 		return s, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name, kind, comment string
+		var name, kind string
+		var comment sql.NullString
 		if err := rows.Scan(&name, &kind, &comment); err != nil {
 			return s, err
 		}
 		if excluded(opts.ExcludeTables, owner, name) {
 			continue
 		}
-		t := schema.Table{Schema: owner, Name: name, Comment: comment}
+		t := schema.Table{Schema: owner, Name: name, Comment: comment.String}
 		if kind == "VIEW" {
 			t.Kind = "view"
 		}
@@ -98,7 +99,7 @@ func (e *Extractor) extractSchema(ctx context.Context, owner string, opts databa
 }
 
 func (e *Extractor) loadColumns(ctx context.Context, t *schema.Table) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT c.column_name, c.data_type || CASE WHEN c.data_type IN ('VARCHAR2','NVARCHAR2','CHAR','NCHAR') THEN '(' || c.char_length || ')' WHEN c.data_type='NUMBER' AND c.data_precision IS NOT NULL THEN '(' || c.data_precision || CASE WHEN c.data_scale IS NOT NULL THEN ',' || c.data_scale END || ')' ELSE '' END, c.nullable, NVL(c.data_default,''), NVL(cm.comments,'') FROM all_tab_columns c LEFT JOIN all_col_comments cm ON cm.owner=c.owner AND cm.table_name=c.table_name AND cm.column_name=c.column_name WHERE c.owner=:1 AND c.table_name=:2 ORDER BY c.column_id`, t.Schema, t.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT c.column_name, c.data_type || CASE WHEN c.data_type IN ('VARCHAR2','NVARCHAR2','CHAR','NCHAR') THEN '(' || c.char_length || ')' WHEN c.data_type='NUMBER' AND c.data_precision IS NOT NULL THEN '(' || c.data_precision || CASE WHEN c.data_scale IS NOT NULL THEN ',' || c.data_scale END || ')' ELSE '' END, c.nullable, c.data_default, cm.comments FROM all_tab_columns c LEFT JOIN all_col_comments cm ON cm.owner=c.owner AND cm.table_name=c.table_name AND cm.column_name=c.column_name WHERE c.owner=:1 AND c.table_name=:2 ORDER BY c.column_id`, t.Schema, t.Name)
 	if err != nil {
 		return err
 	}
@@ -106,10 +107,12 @@ func (e *Extractor) loadColumns(ctx context.Context, t *schema.Table) error {
 	for rows.Next() {
 		var c schema.Column
 		var nullable string
-		if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &c.Default, &c.Comment); err != nil {
+		var defaultValue, comment sql.NullString
+		if err := rows.Scan(&c.Name, &c.NativeType, &nullable, &defaultValue, &comment); err != nil {
 			return err
 		}
 		c.Nullable = nullable == "Y"
+		c.Default, c.Comment = defaultValue.String, comment.String
 		t.Columns = append(t.Columns, c)
 	}
 	return rows.Err()
@@ -131,9 +134,11 @@ func (e *Extractor) loadConstraints(ctx context.Context, t *schema.Table) error 
 		var n string
 		var i item
 		var col sql.NullString
-		if err := rows.Scan(&n, &i.kind, &col, &i.ro, &i.rc, &i.del, &i.expr); err != nil {
+		var ro, rc, del, expr sql.NullString
+		if err := rows.Scan(&n, &i.kind, &col, &ro, &rc, &del, &expr); err != nil {
 			return err
 		}
+		i.ro, i.rc, i.del, i.expr = ro.String, rc.String, del.String, expr.String
 		if items[n] == nil {
 			items[n] = &i
 			order = append(order, n)
