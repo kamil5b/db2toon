@@ -52,6 +52,7 @@ func TestCockroachDBSchemaExtraction(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 	if _, err := conn.Exec(ctx, `
 CREATE SCHEMA app;
+CREATE TYPE app.job_status AS ENUM ('queued', 'running', 'done');
 CREATE TABLE app.users (
   id INT PRIMARY KEY,
   email STRING NOT NULL UNIQUE,
@@ -65,6 +66,15 @@ CREATE TABLE app.posts (
 );
 CREATE INDEX posts_title_idx ON app.posts(title);
 CREATE VIEW app.post_titles AS SELECT id, title FROM app.posts;
+CREATE FUNCTION app.normalize_display_name() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.display_name := lower((NEW).display_name);
+  RETURN NEW;
+END;
+$$ LANGUAGE PLpgSQL;
+CREATE TRIGGER users_normalize_display_name
+  BEFORE INSERT OR UPDATE ON app.users
+  FOR EACH ROW EXECUTE FUNCTION app.normalize_display_name();
 INSERT INTO app.users VALUES (1, 'alice@example.com', 'Alice'), (2, 'bob@example.com', 'Bob');
 INSERT INTO app.posts VALUES (1, 1, 'Hello'), (2, 2, 'World');
 `); err != nil {
@@ -85,6 +95,15 @@ INSERT INTO app.posts VALUES (1, 1, 'Hello'), (2, 2, 'World');
 	}
 	users := findTable(db.Schemas[0].Tables, "users")
 	posts := findTable(db.Schemas[0].Tables, "posts")
+	if len(db.Schemas[0].Enums) != 1 || db.Schemas[0].Enums[0].Name != "job_status" || strings.Join(db.Schemas[0].Enums[0].Values, ",") != "queued,running,done" {
+		t.Fatalf("enums: %#v", db.Schemas[0].Enums)
+	}
+	if len(db.Schemas[0].Routines) != 1 || db.Schemas[0].Routines[0].Name != "normalize_display_name" || db.Schemas[0].Routines[0].Kind != "function" {
+		t.Fatalf("routines: %#v", db.Schemas[0].Routines)
+	}
+	if len(users.Triggers) != 1 || users.Triggers[0].Name != "users_normalize_display_name" || users.Triggers[0].Timing != "BEFORE" || strings.Join(users.Triggers[0].Events, ",") != "INSERT,UPDATE" || !users.Triggers[0].Enabled {
+		t.Fatalf("triggers: %#v", users.Triggers)
+	}
 	if users.PrimaryKey == nil || len(users.Uniques) != 1 || len(users.Checks) != 1 {
 		t.Fatalf("users constraints: %#v", users)
 	}

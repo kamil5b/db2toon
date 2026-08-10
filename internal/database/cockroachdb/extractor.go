@@ -14,7 +14,7 @@ import (
 type Extractor struct{ *postgres.Extractor }
 
 func New(ctx context.Context, dsn string) (*Extractor, error) {
-	e, err := postgres.New(ctx, dsn)
+	e, err := postgres.NewCockroach(ctx, dsn)
 	if err != nil {
 		return nil, err
 	}

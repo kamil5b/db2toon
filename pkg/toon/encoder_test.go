@@ -73,6 +73,49 @@ func TestEncodeExamples(t *testing.T) {
 	}
 }
 
+func TestEncodeEnumsRoutinesAndTriggers(t *testing.T) {
+	db := &schema.Database{Extensions: []schema.Extension{{Name: "vector", Version: "0.8.1", Schema: "public"}}, Schemas: []schema.Schema{{Name: "public",
+		Enums: []schema.Enum{{Name: "job_status", Values: []string{"queued", "running", "done"}}},
+		Routines: []schema.Routine{{
+			Name: "active_job_count", Kind: "function", Arguments: "", ReturnType: "bigint", Language: "sql",
+			Definition: "SELECT count(*) FROM jobs WHERE status = 'running'",
+		}},
+		Tables: []schema.Table{{
+			Name: "jobs", Columns: []schema.Column{{Name: "status", NativeType: "job_status", Nullable: false}},
+			Triggers: []schema.Trigger{{
+				Name: "jobs_updated_at", Timing: "BEFORE", Events: []string{"UPDATE"}, Enabled: true,
+				Definition: "EXECUTE FUNCTION set_updated_at()",
+			}},
+		}},
+	}}}
+
+	var got bytes.Buffer
+	if err := Encode(&got, db); err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	const want = `@extensions
+  vector {version=0.8.1,schema=public}
+
+@enum job_status:
+  queued
+  running
+  done
+
+@routine function active_job_count() -> bigint {language=sql}:
+  SELECT count(*) FROM jobs WHERE status = 'running'
+
+[jobs]
+  status job_status {req}
+@triggers
+  jobs_updated_at: before update
+    EXECUTE FUNCTION set_updated_at()
+
+`
+	if got.String() != want {
+		t.Fatalf("unexpected output\n--- got ---\n%s--- want ---\n%s", got.String(), want)
+	}
+}
+
 func TestEncodeStructuredExampleValues(t *testing.T) {
 	db := &schema.Database{Schemas: []schema.Schema{{Tables: []schema.Table{{
 		Name:    "documents",

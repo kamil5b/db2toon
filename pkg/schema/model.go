@@ -1,12 +1,38 @@
 package schema
 
 type Database struct {
-	Schemas []Schema
+	Extensions []Extension
+	Schemas    []Schema
+}
+
+// Extension is a database-installed extension or plugin.
+type Extension struct {
+	Name    string
+	Version string
+	Schema  string
 }
 
 type Schema struct {
+	Name     string
+	Enums    []Enum
+	Routines []Routine
+	Tables   []Table
+}
+
+// Enum is a schema-qualified enumerated type with values in database order.
+type Enum struct {
 	Name   string
-	Tables []Table
+	Values []string
+}
+
+// Routine describes a stored function or procedure.
+type Routine struct {
+	Name       string
+	Kind       string
+	Arguments  string
+	ReturnType string
+	Language   string
+	Definition string
 }
 
 type Table struct {
@@ -20,7 +46,17 @@ type Table struct {
 	Checks      []CheckConstraint
 	Exclusions  []ExclusionConstraint
 	Indexes     []Index
+	Triggers    []Trigger
 	Example     *Example
+}
+
+// Trigger describes a trigger attached to a table.
+type Trigger struct {
+	Name       string
+	Timing     string
+	Events     []string
+	Enabled    bool
+	Definition string
 }
 
 // Example contains sampled rows for a table. Values are database values and

@@ -23,6 +23,7 @@ func TestMySQLSchemaExtraction(t *testing.T) {
 		mysqlcontainer.WithDatabase("schema_test"),
 		mysqlcontainer.WithUsername("schema_test"),
 		mysqlcontainer.WithPassword("schema_test"),
+		mysqlcontainer.WithConfigFile("testdata/my.cnf"),
 	)
 	if err != nil {
 		t.Fatalf("start MySQL container: %v", err)
@@ -60,6 +61,11 @@ CREATE TABLE posts (
 );
 CREATE INDEX posts_title_idx ON posts(title);
 CREATE VIEW post_titles AS SELECT id, title FROM posts;
+CREATE FUNCTION user_count() RETURNS BIGINT DETERMINISTIC
+RETURN (SELECT COUNT(*) FROM users);
+CREATE PROCEDURE list_users() SELECT id, email FROM users;
+CREATE TRIGGER users_normalize_display_name BEFORE INSERT ON users
+FOR EACH ROW SET NEW.display_name = TRIM(NEW.display_name);
 INSERT INTO users (email, display_name) VALUES ('alice@example.com', 'Alice'), ('bob@example.com', 'Bob');
 INSERT INTO posts (author_id, title) VALUES (1, 'Hello'), (2, 'World');
 `
@@ -86,6 +92,12 @@ INSERT INTO posts (author_id, title) VALUES (1, 'Hello'), (2, 'World');
 	}
 	users := findTable(db.Schemas[0].Tables, "users")
 	posts := findTable(db.Schemas[0].Tables, "posts")
+	if len(db.Schemas[0].Routines) != 2 || !hasRoutine(db.Schemas[0].Routines, "list_users", "procedure") || !hasRoutine(db.Schemas[0].Routines, "user_count", "function") {
+		t.Fatalf("routines: %#v", db.Schemas[0].Routines)
+	}
+	if len(users.Triggers) != 1 || users.Triggers[0].Name != "users_normalize_display_name" || users.Triggers[0].Timing != "BEFORE" || strings.Join(users.Triggers[0].Events, ",") != "INSERT" || !users.Triggers[0].Enabled {
+		t.Fatalf("triggers: %#v", users.Triggers)
+	}
 	if users.PrimaryKey == nil || len(users.Uniques) != 1 || len(users.Checks) != 1 {
 		t.Fatalf("users constraints: %#v", users)
 	}
@@ -115,6 +127,15 @@ func findTable(tables []schema.Table, name string) schema.Table {
 func hasIndex(indexes []schema.Index, name string) bool {
 	for _, index := range indexes {
 		if index.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRoutine(routines []schema.Routine, name, kind string) bool {
+	for _, routine := range routines {
+		if routine.Name == name && routine.Kind == kind {
 			return true
 		}
 	}

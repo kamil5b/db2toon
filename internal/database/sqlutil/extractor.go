@@ -54,6 +54,16 @@ func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (
 			}
 			s.Tables = append(s.Tables, tables[i])
 		}
+		if e.dialect == "mysql" {
+			if err := e.mysqlRoutines(ctx, &s); err != nil {
+				return nil, err
+			}
+		}
+		if e.dialect == "duckdb" {
+			if err := e.duckDBEnums(ctx, &s); err != nil {
+				return nil, err
+			}
+		}
 		out.Schemas = append(out.Schemas, s)
 	}
 	return &out, nil
@@ -200,6 +210,9 @@ func (e *Extractor) populateSQLite(ctx context.Context, t *schema.Table, opts da
 	if err := e.sqliteKeys(ctx, t, opts); err != nil {
 		return err
 	}
+	if err := e.sqliteTriggers(ctx, t); err != nil {
+		return err
+	}
 	var createSQL string
 	if err := e.db.QueryRowContext(ctx, fmt.Sprintf("SELECT COALESCE(sql,'') FROM %s.sqlite_master WHERE name=?", quoteIdent(t.Schema)), t.Name).Scan(&createSQL); err == nil {
 		t.Checks = sqliteChecks(t.Name, createSQL)
@@ -272,6 +285,28 @@ func (e *Extractor) sqliteKeys(ctx context.Context, t *schema.Table, opts databa
 	return idx.Err()
 }
 
+var sqliteTriggerEvent = regexp.MustCompile(`(?is)\b(BEFORE|AFTER|INSTEAD\s+OF)\s+(INSERT|UPDATE|DELETE)\b`)
+
+func (e *Extractor) sqliteTriggers(ctx context.Context, t *schema.Table) error {
+	rows, err := e.db.QueryContext(ctx, fmt.Sprintf("SELECT name, COALESCE(sql,'') FROM %s.sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name", quoteIdent(t.Schema)), t.Name)
+	if err != nil {
+		return fmt.Errorf("query triggers for %s.%s: %w", t.Schema, t.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		trigger := schema.Trigger{Enabled: true}
+		if err := rows.Scan(&trigger.Name, &trigger.Definition); err != nil {
+			return fmt.Errorf("scan trigger for %s.%s: %w", t.Schema, t.Name, err)
+		}
+		if match := sqliteTriggerEvent.FindStringSubmatch(trigger.Definition); match != nil {
+			trigger.Timing = strings.ToUpper(strings.Join(strings.Fields(match[1]), " "))
+			trigger.Events = []string{strings.ToUpper(match[2])}
+		}
+		t.Triggers = append(t.Triggers, trigger)
+	}
+	return rows.Err()
+}
+
 func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts database.ExtractOptions) error {
 	query := "SELECT column_name, data_type, is_nullable, COALESCE(column_default,'') FROM information_schema.columns WHERE table_schema = ? AND table_name = ? ORDER BY ordinal_position"
 	if e.dialect == "mysql" {
@@ -308,7 +343,10 @@ func (e *Extractor) populateDuckDB(ctx context.Context, t *schema.Table, opts da
 		if err := e.mysqlChecks(ctx, t); err != nil {
 			return err
 		}
-		return e.mysqlIndexes(ctx, t)
+		if err := e.mysqlIndexes(ctx, t); err != nil {
+			return err
+		}
+		return e.mysqlTriggers(ctx, t)
 	}
 	return nil
 }
@@ -376,6 +414,84 @@ WHERE k.table_schema = ? AND k.table_name = ? AND k.referenced_table_name IS NOT
 		}
 		t.ForeignKeys[position].LocalColumns = append(t.ForeignKeys[position].LocalColumns, local)
 		t.ForeignKeys[position].ReferencedColumns = append(t.ForeignKeys[position].ReferencedColumns, refColumn)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) mysqlTriggers(ctx context.Context, t *schema.Table) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT trigger_name, action_timing, event_manipulation, action_statement
+FROM information_schema.triggers
+WHERE trigger_schema = ? AND event_object_table = ?
+ORDER BY trigger_name`, t.Schema, t.Name)
+	if err != nil {
+		return fmt.Errorf("query triggers for %s.%s: %w", t.Schema, t.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		trigger := schema.Trigger{Enabled: true}
+		var event string
+		if err := rows.Scan(&trigger.Name, &trigger.Timing, &event, &trigger.Definition); err != nil {
+			return fmt.Errorf("scan trigger for %s.%s: %w", t.Schema, t.Name, err)
+		}
+		trigger.Timing = strings.ToUpper(trigger.Timing)
+		trigger.Events = []string{strings.ToUpper(event)}
+		t.Triggers = append(t.Triggers, trigger)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) mysqlRoutines(ctx context.Context, namespace *schema.Schema) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT r.routine_name,
+       LOWER(r.routine_type),
+       COALESCE(GROUP_CONCAT(CONCAT_WS(' ', p.parameter_mode, p.parameter_name, p.dtd_identifier)
+                             ORDER BY p.ordinal_position SEPARATOR ', '), ''),
+       COALESCE(r.dtd_identifier, ''),
+       COALESCE(r.routine_body, ''),
+       COALESCE(r.routine_definition, '')
+FROM information_schema.routines r
+LEFT JOIN information_schema.parameters p
+  ON p.specific_schema = r.routine_schema
+ AND p.specific_name = r.specific_name
+ AND p.ordinal_position > 0
+WHERE r.routine_schema = ?
+GROUP BY r.specific_name, r.routine_name, r.routine_type, r.dtd_identifier, r.routine_body, r.routine_definition
+ORDER BY r.routine_name, r.specific_name`, namespace.Name)
+	if err != nil {
+		return fmt.Errorf("query routines for schema %s: %w", namespace.Name, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var routine schema.Routine
+		if err := rows.Scan(&routine.Name, &routine.Kind, &routine.Arguments, &routine.ReturnType, &routine.Language, &routine.Definition); err != nil {
+			return fmt.Errorf("scan routine for schema %s: %w", namespace.Name, err)
+		}
+		namespace.Routines = append(namespace.Routines, routine)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) duckDBEnums(ctx context.Context, namespace *schema.Schema) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT type_name, unnest(labels) AS label
+FROM duckdb_types()
+WHERE schema_name = ?
+ORDER BY type_name`, namespace.Name)
+	if err != nil {
+		return fmt.Errorf("query enums for schema %s: %w", namespace.Name, err)
+	}
+	defer rows.Close()
+	positions := map[string]int{}
+	for rows.Next() {
+		var name, value string
+		if err := rows.Scan(&name, &value); err != nil {
+			return fmt.Errorf("scan enum for schema %s: %w", namespace.Name, err)
+		}
+		position, ok := positions[name]
+		if !ok {
+			position = len(namespace.Enums)
+			positions[name] = position
+			namespace.Enums = append(namespace.Enums, schema.Enum{Name: name})
+		}
+		namespace.Enums[position].Values = append(namespace.Enums[position].Values, value)
 	}
 	return rows.Err()
 }

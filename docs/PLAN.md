@@ -62,6 +62,24 @@ pkg/toon/
     encoder_test.go
 ```
 
+## Canonical schema-model expansion
+
+Add first-class model and TOON support for metadata currently discarded by the
+relational adapters:
+
+1. **Enums** — schema-qualified enum types and their ordered values, including
+   columns that reference them.
+2. **Triggers** — trigger name, timing, events, target table, enabled state,
+   and definition where the database exposes it.
+3. **Functions and procedures** — schema-qualified routine name, kind,
+   arguments, return type, language, and definition where the database exposes
+   it.
+
+Each relational adapter should declare support for these capabilities and add
+representative conformance cases. The TOON encoder should retain these objects
+in explicit sections rather than flattening them into table comments or native
+type strings.
+
 ## Phase 1: Additional databases
 
 Database support is divided into priority tiers. Each adapter must pass a
@@ -88,22 +106,36 @@ in ordinary Docker-based CI.
 7. **InfluxDB** `[Testable: Testcontainers]` — organizations, buckets, measurements, tags, fields, and retention policies.
 8. **Redis** `[Testable: Testcontainers]` — configured data structures, key patterns, TTLs, and sampled key metadata where discovery is available.
 9. **TiDB/YugabyteDB** `[Testable: Testcontainers]` — reuse MySQL/PostgreSQL compatibility where safe and document distributed features.
-10. **SQL Server** `[Testable: Testcontainers]` — use `sys.*` catalogs and extended properties.
+10. **SQL Server / MSSQL** `[Testable: Testcontainers]` — use `sys.*` catalogs
+    and extended properties; cover schemas, tables, views, columns, keys,
+    indexes, constraints, triggers, functions, procedures, and user-defined
+    types where representable.
 11. **Firebird** `[Testable: Testcontainers]` — cover relational catalogs and vendor-specific metadata.
-12. **Oracle** `[Testable: Testcontainers]` — implement if required by users, subject to image licensing and CI constraints.
+12. **Oracle** `[Testable: Testcontainers]` — implement if required by users,
+    subject to image licensing and CI constraints; cover schemas, tables,
+    views, constraints, indexes, triggers, functions, procedures, and Oracle
+    enum-like domain/type constructs where representable.
 13. **IBM Db2** `[Testable: Testcontainers]` — cover relational catalogs and vendor-specific metadata, subject to image licensing and CI constraints.
 
 ### Priority 2: The rest
 
 1. **DynamoDB** `[Testable: emulator+cloud]` — tables, partition/sort keys, secondary indexes, streams, and inferred item attributes.
-2. **BigQuery** `[Testable: emulator+cloud]` — projects, datasets, tables, views, nested fields, partitions, and clustering.
-3. **Snowflake** `[Testable: cloud]` — databases, schemas, tables, views, stages, and warehouse metadata.
+2. **BigQuery** `[Testable: emulator+cloud]` — projects, datasets, tables,
+    views, nested fields, partitions, clustering, routines, and table
+    functions. BigQuery has no native triggers or enum type.
+3. **Snowflake** `[Testable: cloud]` — databases, schemas, tables, views,
+    stages, warehouse metadata, user-defined functions/procedures, and
+    streams/tasks where representable. Snowflake has no native triggers or
+    enum type.
 4. **Redshift** `[Testable: cloud]` — schemas, tables, distribution keys, sort keys, and encodings.
 
 Cross-database considerations:
 
 - Keep the canonical model extensible without forcing non-relational systems into tables and foreign keys.
 - Define capability flags for schemas, comments, constraints, indexes, relationships, sampling, and transactions.
+- Extend capability flags and the shared conformance suite for enums, triggers,
+  functions, and procedures. Distinguish native support from vendor-specific
+  approximations, such as Oracle domain/type constructs.
 - Use read-only discovery queries and configurable sampling limits where full schema inference scans data.
 - Add per-adapter connection options without leaking vendor-specific flags into unrelated adapters.
 - Require every adapter, driver, CLI binary, and test suite to build and run with `CGO_ENABLED=0`.

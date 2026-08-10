@@ -13,6 +13,8 @@ A CLI tool that converts database schemas into the Toon schema definition format
 - **Relationship Mapping**: Converts foreign key constraints to inline references or multi-column references
 - **Comment Preservation**: Includes comments where the database exposes them; SQLite does not have catalog comments
 - **Index Documentation**: Extracts and documents database indexes
+- **Database Objects**: Preserves supported enums, triggers, routines, and
+  installed extensions in explicit TOON sections
 - **Cross-Platform**: Builds without CGO for Linux, macOS, and Windows (amd64 and arm64)
 - **DBML Adapter**: Converts DBML files (or standard input) into the same TOON format
 

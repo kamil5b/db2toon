@@ -27,6 +27,20 @@ func TestExtractLocalDatabase(t *testing.T) {
 	}
 }
 
+func TestExtractEnums(t *testing.T) {
+	e := newTestExtractor(t)
+	if _, err := e.DB().Exec(`CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy'); CREATE TABLE entries (m mood)`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.Extract(context.Background(), database.ExtractOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Schemas[0].Enums) != 1 || got.Schemas[0].Enums[0].Name != "mood" || len(got.Schemas[0].Enums[0].Values) != 3 {
+		t.Fatalf("enums: %#v", got.Schemas[0].Enums)
+	}
+}
+
 func TestExtractConstraintsExamplesAndExclusions(t *testing.T) {
 	e := newTestExtractor(t)
 	if _, err := e.DB().Exec(`
@@ -44,7 +58,7 @@ INSERT INTO customers VALUES (1, 'one@example.com', 'one'), (2, 'two@example.com
 	got, err := e.Extract(context.Background(), database.ExtractOptions{
 		ExampleSample:        2,
 		ExcludeExampleFields: []string{"customers.secret"},
-		ExcludeExampleTables: []string{"ignored"},
+		ExcludeTables:        []string{"ignored"},
 	})
 	if err != nil {
 		t.Fatal(err)

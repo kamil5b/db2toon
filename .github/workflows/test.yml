@@ -31,3 +31,9 @@ jobs:
       - run: go test -tags=integration ./internal/database/postgres ./internal/mcp
         env:
           CGO_ENABLED: 0
+
+  duckdb-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-integration-duckdb

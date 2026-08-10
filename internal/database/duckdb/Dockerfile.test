@@ -1,0 +1,22 @@
+FROM golang:1.26-bookworm
+
+ARG TARGETARCH
+ARG DUCKDB_VERSION=v1.2.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && case "${TARGETARCH}" in \
+        amd64) archive="libduckdb-linux-amd64.zip" ;; \
+        arm64) archive="libduckdb-linux-arm64.zip" ;; \
+        *) echo "unsupported DuckDB test architecture: ${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
+    && curl --fail --location --retry 3 \
+        "https://github.com/duckdb/duckdb/releases/download/${DUCKDB_VERSION}/${archive}" \
+        --output /tmp/libduckdb.zip \
+    && unzip -q /tmp/libduckdb.zip -d /opt/duckdb \
+    && rm /tmp/libduckdb.zip \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV DUCKDB_LIBRARY_PATH=/opt/duckdb/libduckdb.so
+
+WORKDIR /workspace
