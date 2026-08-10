@@ -149,7 +149,7 @@ CREATE TRIGGER users_audit BEFORE INSERT ON users FOR EACH ROW BEGIN NULL; END;
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 2 {
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 3 {
 		t.Fatalf("database: %#v", db)
 	}
 	if len(db.Schemas[0].Types) != 1 || len(db.Schemas[0].Sequences) != 1 || len(db.Schemas[0].Synonyms) != 1 || len(db.Schemas[0].Routines) != 2 {
