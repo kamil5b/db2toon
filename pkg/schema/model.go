@@ -13,16 +13,43 @@ type Extension struct {
 }
 
 type Schema struct {
-	Name     string
-	Enums    []Enum
-	Routines []Routine
-	Tables   []Table
+	Name      string
+	Enums     []Enum
+	Types     []UserDefinedType
+	Sequences []Sequence
+	Synonyms  []Synonym
+	Routines  []Routine
+	Tables    []Table
 }
 
 // Enum is a schema-qualified enumerated type with values in database order.
 type Enum struct {
 	Name   string
 	Values []string
+}
+
+// UserDefinedType describes an alias or table type declared by a database.
+type UserDefinedType struct {
+	Name       string
+	Kind       string
+	NativeType string
+}
+
+// Sequence describes a database-managed numeric sequence.
+type Sequence struct {
+	Name       string
+	NativeType string
+	Start      string
+	Increment  string
+	Minimum    string
+	Maximum    string
+	Cyclic     bool
+}
+
+// Synonym is an alternate name for another database object.
+type Synonym struct {
+	Name   string
+	Target string
 }
 
 // Routine describes a stored function or procedure.
@@ -38,6 +65,8 @@ type Routine struct {
 type Table struct {
 	Schema      string
 	Name        string
+	Kind        string
+	Definition  string
 	Comment     string
 	Columns     []Column
 	PrimaryKey  *PrimaryKey

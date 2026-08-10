@@ -37,6 +37,9 @@ func TestCapabilities(t *testing.T) {
 	if capabilities, ok := CapabilitiesFor("mysql"); !ok || capabilities.Dialect != "mysql" {
 		t.Fatalf("mysql should be advertised: %#v, %v", capabilities, ok)
 	}
+	if capabilities, ok := CapabilitiesFor("sqlserver"); !ok || capabilities.Dialect != "mssql" {
+		t.Fatalf("SQL Server should be advertised: %#v, %v", capabilities, ok)
+	}
 }
 
 func TestExtractRequiresExactlyOneSource(t *testing.T) {

@@ -32,6 +32,18 @@ jobs:
         env:
           CGO_ENABLED: 0
 
+  mssql-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -v -tags=integration ./internal/database/mssql
+        env:
+          CGO_ENABLED: 0
+
   duckdb-integration:
     runs-on: ubuntu-latest
     steps:

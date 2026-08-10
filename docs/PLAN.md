@@ -37,6 +37,7 @@ internal/database/
     mongodb/
     clickhouse/
     cockroachdb/
+    mssql/
     neo4j/
     redis/
     cassandra/

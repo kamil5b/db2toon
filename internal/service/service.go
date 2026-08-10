@@ -63,6 +63,11 @@ func CapabilitiesFor(dialect string) (Capabilities, bool) {
 			"example_sample_ordered", "exclude_tables", "exclude_example_tables",
 			"exclude_example_fields", "seed",
 		}}, true
+	case "mssql", "sqlserver":
+		return Capabilities{Dialect: "mssql", Options: []string{
+			"schemas", "include_views", "example_sample", "exclude_tables",
+			"exclude_example_tables", "exclude_example_fields",
+		}}, true
 	default:
 		return Capabilities{}, false
 	}

@@ -86,6 +86,53 @@ func (e encoder) schemaObjects(namespace schema.Schema) error {
 			return err
 		}
 	}
+	for _, typ := range namespace.Types {
+		if err := e.printf("@type %s %s", e.schemaObjectName(namespace.Name, typ.Name), strings.ToLower(typ.Kind)); err != nil {
+			return err
+		}
+		if typ.NativeType != "" {
+			if err := e.printf(" -> %s", shrink(typ.NativeType)); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n\n"); err != nil {
+			return err
+		}
+	}
+	for _, sequence := range namespace.Sequences {
+		if err := e.printf("@sequence %s %s", e.schemaObjectName(namespace.Name, sequence.Name), shrink(sequence.NativeType)); err != nil {
+			return err
+		}
+		attributes := make([]string, 0, 5)
+		if sequence.Start != "" {
+			attributes = append(attributes, "start="+sequence.Start)
+		}
+		if sequence.Increment != "" {
+			attributes = append(attributes, "increment="+sequence.Increment)
+		}
+		if sequence.Minimum != "" {
+			attributes = append(attributes, "min="+sequence.Minimum)
+		}
+		if sequence.Maximum != "" {
+			attributes = append(attributes, "max="+sequence.Maximum)
+		}
+		if sequence.Cyclic {
+			attributes = append(attributes, "cycle")
+		}
+		if len(attributes) > 0 {
+			if err := e.printf(" {%s}", strings.Join(attributes, ",")); err != nil {
+				return err
+			}
+		}
+		if err := e.printf("\n\n"); err != nil {
+			return err
+		}
+	}
+	for _, synonym := range namespace.Synonyms {
+		if err := e.printf("@synonym %s -> %s\n\n", e.schemaObjectName(namespace.Name, synonym.Name), singleLine(synonym.Target)); err != nil {
+			return err
+		}
+	}
 	for _, routine := range namespace.Routines {
 		kind := strings.ToLower(routine.Kind)
 		if kind == "" {
@@ -141,12 +188,30 @@ func (e encoder) table(namespace string, table schema.Table) error {
 	if e.multipleSchemas || (namespace != "" && namespace != "public") {
 		name = identifier(namespace) + "." + name
 	}
-	if err := e.printf("[%s]\n", name); err != nil {
+	if err := e.printf("[%s]", name); err != nil {
+		return err
+	}
+	if table.Kind != "" && table.Kind != "table" {
+		if err := e.printf(" {%s}", strings.ToLower(table.Kind)); err != nil {
+			return err
+		}
+	}
+	if err := e.printf("\n"); err != nil {
 		return err
 	}
 	for _, line := range commentLines(table.Comment) {
 		if err := e.printf("# %s\n", line); err != nil {
 			return err
+		}
+	}
+	if table.Definition != "" {
+		if err := e.printf("@definition\n"); err != nil {
+			return err
+		}
+		for _, line := range commentLines(table.Definition) {
+			if err := e.printf("  %s\n", line); err != nil {
+				return err
+			}
 		}
 	}
 
