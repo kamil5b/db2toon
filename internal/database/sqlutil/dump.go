@@ -36,7 +36,11 @@ func (e *DumpExtractor) Extract(ctx context.Context, opts database.ExtractOption
 	if err != nil {
 		return nil, fmt.Errorf("read %s dump: %w", e.dialect, err)
 	}
-	d := &genericDump{tables: map[string]*schema.Table{}, rows: map[string][][]any{}, defaultSchema: e.defaultSchema}
+	defaultSchema := e.defaultSchema
+	if defaultSchema == "" && len(opts.Schemas) == 1 {
+		defaultSchema = opts.Schemas[0]
+	}
+	d := &genericDump{tables: map[string]*schema.Table{}, rows: map[string][][]any{}, schemas: map[string]*schema.Schema{}, defaultSchema: defaultSchema}
 	if err := d.parse(string(b)); err != nil {
 		return nil, err
 	}
@@ -47,12 +51,19 @@ type genericDump struct {
 	tables        map[string]*schema.Table
 	order         []string
 	rows          map[string][][]any
+	schemas       map[string]*schema.Schema
+	schemaOrder   []string
 	defaultSchema string
 	currentSchema string
 }
 
 func (d *genericDump) parse(input string) error {
-	for _, raw := range genericStatements(input) {
+	// SQL Server uses GO and Oracle uses a slash on its own line as batch
+	// separators. Converting either to a semicolon lets the statement splitter
+	// preserve the following CREATE statement after routine bodies.
+	input = regexp.MustCompile(`(?m)^\s*(?:GO|/)\s*$`).ReplaceAllString(input, ";")
+	for _, raw := range genericStatements(normalizeMySQLDelimiters(input)) {
+		raw = strings.ReplaceAll(raw, "\x00", ";")
 		s := strings.TrimSpace(raw)
 		if s == "" {
 			continue
@@ -75,6 +86,26 @@ func (d *genericDump) parse(input string) error {
 			d.comment(s)
 		case strings.HasPrefix(u, "INSERT INTO"):
 			d.insert(s)
+		case strings.HasPrefix(u, "CREATE VIEW"):
+			d.view(s)
+		case strings.HasPrefix(u, "CREATE FUNCTION"), strings.HasPrefix(u, "CREATE PROCEDURE"), strings.HasPrefix(u, "CREATE OR REPLACE FUNCTION"), strings.HasPrefix(u, "CREATE OR REPLACE PROCEDURE"):
+			d.routine(s)
+		case strings.HasPrefix(u, "CREATE TRIGGER"), strings.HasPrefix(u, "CREATE OR REPLACE TRIGGER"):
+			d.trigger(s)
+		case strings.HasPrefix(u, "CREATE SEQUENCE"):
+			d.sequence(s)
+		case strings.HasPrefix(u, "CREATE TYPE"):
+			d.userType(s)
+		case strings.HasPrefix(u, "CREATE SYNONYM"):
+			d.synonym(s)
+		case strings.HasPrefix(u, "CREATE MATERIALIZED VIEW"):
+			d.object(s, "materialized_view", `(?is)^CREATE\s+MATERIALIZED\s+VIEW\s+([^\s]+)`)
+		case strings.HasPrefix(u, "CREATE PACKAGE BODY"):
+			d.object(s, "package_body", `(?is)^CREATE\s+PACKAGE\s+BODY\s+([^\s]+)`)
+		case strings.HasPrefix(u, "CREATE PACKAGE"):
+			d.object(s, "package", `(?is)^CREATE\s+PACKAGE\s+([^\s]+)`)
+		case strings.HasPrefix(u, "CREATE DATABASE LINK"):
+			d.object(s, "database_link", `(?is)^CREATE\s+DATABASE\s+LINK\s+([^\s]+)`)
 		}
 	}
 	return nil
@@ -89,6 +120,10 @@ func (d *genericDump) createTable(s string) error {
 	sch, name := genericQualified(m[1], d)
 	key := sch + "." + name
 	t := &schema.Table{Schema: sch, Name: name}
+	d.namespace(sch)
+	if strings.Contains(strings.ToUpper(s), "PARTITION BY") {
+		d.namespace(sch).Objects = append(d.namespace(sch).Objects, schema.Object{Name: name, Kind: "partitioned_table", Definition: s})
+	}
 	d.tables[key] = t
 	d.order = append(d.order, key)
 	for _, p := range genericSplit(m[2], ',') {
@@ -181,6 +216,108 @@ func (d *genericDump) index(s string) {
 		t.Indexes = append(t.Indexes, schema.Index{Name: genericUnquote(m[2]), Unique: m[1] != "", Definition: s, Method: m[4], Keys: genericIdentifiers(m[5])})
 	}
 }
+func (d *genericDump) view(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	d.namespace(sch)
+	t := &schema.Table{Schema: sch, Name: name, Kind: "view", Definition: s}
+	d.tables[sch+"."+name] = t
+	d.order = append(d.order, sch+"."+name)
+}
+func (d *genericDump) routine(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+(?:OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\s+([^\s(]+)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	sch, name := genericQualified(m[2], d)
+	d.namespace(sch).Routines = append(d.namespace(sch).Routines, schema.Routine{Name: name, Kind: strings.ToLower(m[1]), Definition: s})
+}
+func (d *genericDump) trigger(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+([^\s]+)\s+(?:ON\s+)?([^\s]+)?\s*(.*)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	body := m[3]
+	tableMatch := regexp.MustCompile(`(?is)\bON\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(tableMatch) < 2 {
+		tableMatch = regexp.MustCompile(`(?is)\b(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(?:INSERT|UPDATE|DELETE).*?\bON\s+([^\s]+)`).FindStringSubmatch(s)
+	}
+	if len(tableMatch) < 2 {
+		return
+	}
+	key := d.key(tableMatch[1])
+	t := d.tables[key]
+	if t == nil {
+		return
+	}
+	tr := schema.Trigger{Name: name, Enabled: true, Definition: s}
+	u := strings.ToUpper(s)
+	if strings.Contains(u, "INSTEAD OF") {
+		tr.Timing = "INSTEAD OF"
+	} else if strings.Contains(u, "BEFORE") {
+		tr.Timing = "BEFORE"
+	} else {
+		tr.Timing = "AFTER"
+	}
+	for _, event := range []string{"INSERT", "UPDATE", "DELETE"} {
+		if strings.Contains(u, event) {
+			tr.Events = append(tr.Events, event)
+		}
+	}
+	_ = sch
+	_ = body
+	t.Triggers = append(t.Triggers, tr)
+}
+func (d *genericDump) sequence(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+SEQUENCE\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	q := schema.Sequence{Name: name, NativeType: "NUMBER"}
+	if x := regexp.MustCompile(`(?is)\bINCREMENT\s+BY\s+([^\s;]+)`).FindStringSubmatch(s); len(x) > 1 {
+		q.Increment = x[1]
+	}
+	if x := regexp.MustCompile(`(?is)\bSTART\s+WITH\s+([^\s;]+)`).FindStringSubmatch(s); len(x) > 1 {
+		q.Start = x[1]
+	}
+	d.namespace(sch).Sequences = append(d.namespace(sch).Sequences, q)
+}
+func (d *genericDump) userType(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+TYPE\s+([^\s]+)\s+(?:AS\s+)?(?:OBJECT\s*)?(?:FROM\s+)?([^\s(]+)?`).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	typ := schema.UserDefinedType{Name: name, Kind: "object"}
+	if len(m) > 2 && m[2] != "" {
+		typ.NativeType = m[2]
+		if strings.Contains(strings.ToUpper(s), " FROM ") {
+			typ.Kind = "alias"
+		}
+	}
+	d.namespace(sch).Types = append(d.namespace(sch).Types, typ)
+}
+func (d *genericDump) synonym(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+SYNONYM\s+([^\s]+)\s+FOR\s+([^\s;]+)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	d.namespace(sch).Synonyms = append(d.namespace(sch).Synonyms, schema.Synonym{Name: name, Target: m[2]})
+}
+func (d *genericDump) object(s, kind, expression string) {
+	m := regexp.MustCompile(expression).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := genericQualified(m[1], d)
+	d.namespace(sch).Objects = append(d.namespace(sch).Objects, schema.Object{Name: name, Kind: kind, Definition: s})
+}
 func (d *genericDump) comment(s string) {
 	m := regexp.MustCompile(`(?is)^COMMENT ON\s+(TABLE|COLUMN)\s+([^ ]+)\s+IS\s+(.+)`).FindStringSubmatch(strings.TrimSuffix(strings.TrimSpace(s), ";"))
 	if len(m) < 4 {
@@ -235,6 +372,13 @@ func (d *genericDump) result(ctx context.Context, o database.ExtractOptions) *sc
 	for _, s := range o.Schemas {
 		allow[s] = true
 	}
+	for _, name := range d.schemaOrder {
+		if len(allow) > 0 && !allow[name] {
+			continue
+		}
+		copied := *d.schemas[name]
+		out.Schemas = append(out.Schemas, copied)
+	}
 	for _, k := range d.order {
 		if ctx.Err() != nil {
 			break
@@ -274,12 +418,22 @@ func (d *genericDump) result(ctx context.Context, o database.ExtractOptions) *sc
 				t.Example = ex
 			}
 		}
-		if len(out.Schemas) == 0 || out.Schemas[len(out.Schemas)-1].Name != t.Schema {
-			out.Schemas = append(out.Schemas, schema.Schema{Name: t.Schema})
+		for i := range out.Schemas {
+			if out.Schemas[i].Name == t.Schema {
+				out.Schemas[i].Tables = append(out.Schemas[i].Tables, t)
+				break
+			}
 		}
-		out.Schemas[len(out.Schemas)-1].Tables = append(out.Schemas[len(out.Schemas)-1].Tables, t)
 	}
 	return out
+}
+
+func (d *genericDump) namespace(name string) *schema.Schema {
+	if d.schemas[name] == nil {
+		d.schemas[name] = &schema.Schema{Name: name}
+		d.schemaOrder = append(d.schemaOrder, name)
+	}
+	return d.schemas[name]
 }
 
 func (d *genericDump) key(s string) string { a, b := genericQualified(s, d); return a + "." + b }
@@ -475,4 +629,28 @@ func genericStatements(s string) []string {
 		r = append(r, s[start:])
 	}
 	return r
+}
+
+// MySQL routine dumps switch DELIMITER so semicolons inside a body are not
+// statement terminators. Protect those semicolons before generic splitting.
+func normalizeMySQLDelimiters(input string) string {
+	input = strings.ReplaceAll(input, "\r\n", "\n")
+	delimiter := ";"
+	var out strings.Builder
+	for _, line := range strings.SplitAfter(input, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToUpper(trimmed), "DELIMITER ") {
+			delimiter = strings.TrimSpace(trimmed[len("DELIMITER "):])
+			continue
+		}
+		if delimiter != ";" {
+			line = strings.ReplaceAll(line, ";", "\x00")
+			withoutNL := strings.TrimRight(line, "\r\n")
+			if strings.HasSuffix(withoutNL, delimiter) {
+				line = strings.TrimSuffix(withoutNL, delimiter) + ";" + line[len(withoutNL):]
+			}
+		}
+		out.WriteString(line)
+	}
+	return out.String()
 }

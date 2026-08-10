@@ -5,6 +5,8 @@ package oracle
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -112,6 +114,53 @@ func TestOracleSchemaExtraction(t *testing.T) {
 	for _, want := range []struct{ kind, name string }{{"materialized_view", "USER_COUNT_MV"}, {"package", "USER_API"}, {"package_body", "USER_API"}, {"partitioned_table", "AUDIT_EVENTS"}, {"database_link", "REMOTE_DB"}, {"scheduler_job", "APP_JOB"}} {
 		if !hasObject(db.Schemas[0].Objects, want.kind, want.name) {
 			t.Fatalf("missing Oracle object %s %s: %#v", want.kind, want.name, db.Schemas[0].Objects)
+		}
+	}
+}
+
+func TestOracleDumpExtraction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schema.sql")
+	const dump = `
+CREATE TYPE address_type AS OBJECT (street VARCHAR2(100));
+CREATE SEQUENCE invoice_number START WITH 100 INCREMENT BY 5;
+CREATE TABLE users (id NUMBER PRIMARY KEY, email VARCHAR2(255) NOT NULL UNIQUE);
+CREATE VIEW user_names AS SELECT id, email FROM users;
+CREATE MATERIALIZED VIEW user_count_mv AS SELECT COUNT(*) AS total FROM users;
+CREATE TABLE audit_events (id NUMBER, created_at DATE) PARTITION BY RANGE (created_at) (PARTITION p2025 VALUES LESS THAN (DATE '2026-01-01'));
+CREATE SYNONYM people FOR users;
+CREATE FUNCTION user_count RETURN NUMBER AS BEGIN RETURN 1; END;
+/
+CREATE PROCEDURE list_users AS BEGIN NULL; END;
+/
+CREATE PACKAGE user_api AS FUNCTION count_users RETURN NUMBER; END;
+/
+CREATE DATABASE LINK remote_db CONNECT TO app IDENTIFIED BY AppPassw0rd USING 'FREEPDB1';
+CREATE TRIGGER users_audit BEFORE INSERT ON users FOR EACH ROW BEGIN NULL; END;
+/
+`
+	if err := os.WriteFile(path, []byte(dump), 0600); err != nil {
+		t.Fatal(err)
+	}
+	extractor, err := NewFromDump(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := extractor.Extract(context.Background(), database.ExtractOptions{Schemas: []string{"APP"}, IncludeViews: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 2 {
+		t.Fatalf("database: %#v", db)
+	}
+	if len(db.Schemas[0].Types) != 1 || len(db.Schemas[0].Sequences) != 1 || len(db.Schemas[0].Synonyms) != 1 || len(db.Schemas[0].Routines) != 2 {
+		t.Fatalf("schema objects: %#v", db.Schemas[0])
+	}
+	if triggers := findTable(db.Schemas[0].Tables, "users").Triggers; len(triggers) != 1 || triggers[0].Name != "users_audit" {
+		t.Fatalf("triggers: %#v", triggers)
+	}
+	for _, want := range []struct{ kind, name string }{{"materialized_view", "user_count_mv"}, {"package", "user_api"}, {"partitioned_table", "audit_events"}, {"database_link", "remote_db"}} {
+		if !hasObject(db.Schemas[0].Objects, want.kind, want.name) {
+			t.Fatalf("objects: %#v", db.Schemas[0].Objects)
 		}
 	}
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kamil5b/db2toon/internal/database"
+	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
 func TestDumpExtractorParsesSchemaAndExamples(t *testing.T) {
@@ -80,4 +82,62 @@ func TestDumpExtractorAppliesExampleExclusions(t *testing.T) {
 	if got := db.Schemas[0].Tables[0].Example.Columns; len(got) != 1 || got[0] != "id" {
 		t.Fatalf("columns = %#v", got)
 	}
+}
+
+func TestDumpExtractorParsesEnumsRoutinesTriggersViewsAndSequences(t *testing.T) {
+	dump := `CREATE SCHEMA app;
+CREATE TYPE app.job_status AS ENUM ('queued', 'running', 'done');
+CREATE SEQUENCE app.job_number START WITH 100 INCREMENT BY 5;
+CREATE TABLE app.jobs (id bigint PRIMARY KEY, status app.job_status NOT NULL);
+CREATE VIEW app.active_jobs AS SELECT id FROM app.jobs WHERE status = 'running';
+CREATE FUNCTION app.set_job_status() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  RETURN NEW;
+END;
+$$;
+CREATE PROCEDURE app.archive_jobs() LANGUAGE sql AS $$ DELETE FROM app.jobs; $$;
+CREATE TRIGGER jobs_status_trigger BEFORE INSERT OR UPDATE ON app.jobs FOR EACH ROW EXECUTE FUNCTION app.set_job_status();
+`
+	path := filepath.Join(t.TempDir(), "objects.sql")
+	if err := os.WriteFile(path, []byte(dump), 0600); err != nil {
+		t.Fatal(err)
+	}
+	e, err := NewFromDump(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := e.Extract(context.Background(), database.ExtractOptions{Schemas: []string{"app"}, IncludeViews: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(db.Schemas) != 1 || len(db.Schemas[0].Tables) != 2 {
+		t.Fatalf("database: %#v", db)
+	}
+	s := db.Schemas[0]
+	if len(s.Enums) != 1 || strings.Join(s.Enums[0].Values, ",") != "queued,running,done" {
+		t.Fatalf("enums: %#v", s.Enums)
+	}
+	if len(s.Sequences) != 1 || s.Sequences[0].Name != "job_number" || s.Sequences[0].Increment != "5" {
+		t.Fatalf("sequences: %#v", s.Sequences)
+	}
+	if len(s.Routines) != 2 {
+		t.Fatalf("routines: %#v", s.Routines)
+	}
+	jobs := findDumpTable(s.Tables, "jobs")
+	if len(jobs.Triggers) != 1 || jobs.Triggers[0].Name != "jobs_status_trigger" {
+		t.Fatalf("triggers: %#v", jobs.Triggers)
+	}
+	if view := findDumpTable(s.Tables, "active_jobs"); view.Kind != "view" {
+		t.Fatalf("view: %#v", view)
+	}
+}
+
+func findDumpTable(tables []schema.Table, name string) schema.Table {
+	for _, table := range tables {
+		if table.Name == name {
+			return table
+		}
+	}
+	return schema.Table{}
 }

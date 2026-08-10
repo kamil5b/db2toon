@@ -90,6 +90,10 @@ func newExtractor(ctx context.Context, dialect string, req Request) (database.Ex
 			return mysql.NewFromDump(ctx, req.Dump)
 		case "cockroachdb":
 			return cockroachdb.NewFromDump(ctx, req.Dump)
+		case "mssql", "sqlserver":
+			return mssql.NewFromDump(ctx, req.Dump)
+		case "oracle":
+			return oracle.NewFromDump(ctx, req.Dump)
 		default:
 			return nil, fmt.Errorf("unsupported database dialect %q", dialect)
 		}

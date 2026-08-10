@@ -8,13 +8,14 @@ A CLI tool that converts database schemas into the Toon schema definition format
 
 ## Features
 
-- **Schema Extraction**: Automatically extracts tables, columns, and metadata from PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, and Microsoft SQL Server
+- **Schema Extraction**: Automatically extracts tables, columns, and metadata from PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, CockroachDB, Microsoft SQL Server, and Oracle
 - **Type Normalization**: Simplifies PostgreSQL types (e.g., `character varying` → `varchar`)
 - **Relationship Mapping**: Converts foreign key constraints to inline references or multi-column references
 - **Comment Preservation**: Includes comments where the database exposes them; SQLite does not have catalog comments
 - **Index Documentation**: Extracts and documents database indexes
-- **Database Objects**: Preserves supported enums, triggers, routines, and
-  installed extensions in explicit TOON sections
+- **Database Objects**: Preserves supported enums, types, sequences, synonyms,
+  triggers, routines, extensions, materialized views, packages, and other
+  vendor-specific objects in explicit TOON sections
 - **Cross-Platform**: Builds without CGO for Linux, macOS, and Windows (amd64 and arm64)
 - **DBML Adapter**: Converts DBML files (or standard input) into the same TOON format
 
@@ -92,10 +93,12 @@ or results.
 # SQLite database file
 ./db2toon sqlite -db ./schema.db
 
-# Plain-text SQL dump (PostgreSQL, SQLite, DuckDB, MySQL/MariaDB, and CockroachDB)
+# Plain-text SQL dump
 ./db2toon postgres -dump ./schema.sql
 ./db2toon sqlite -dump ./schema.sql
 ./db2toon mysql -dump ./schema.sql
+./db2toon mssql -dump ./schema.sql
+./db2toon oracle -dump ./schema.sql
 
 # DuckDB database file (requires libduckdb at runtime)
 ./db2toon duckdb -db ./analytics.duckdb
@@ -103,7 +106,8 @@ or results.
 # Microsoft SQL Server (defaults to dbo)
 ./db2toon mssql -db 'sqlserver://sa:password@localhost:1433?database=app&encrypt=disable'
 
-# Oracle (defaults to the current schema)
+# Oracle Database; the current schema is used unless -schema/-schemas is set.
+# go-ora accepts an EZConnect-style URL.
 ./db2toon oracle -db 'oracle://app:password@localhost:1521/FREEPDB1'
 
 # Compatibility command; PostgreSQL is selected automatically.
@@ -142,17 +146,19 @@ Select multiple schemas, include partitioned tables, and change the default
 ./db2toon postgres -db "$DATABASE_URL" -schemas public,audit -include-partitioned -timeout 1m
 
 # SQLite and DuckDB default to the `main` schema. SQL Server defaults to `dbo`.
+# Oracle defaults to the session's CURRENT_SCHEMA.
 ./db2toon sqlite -db ./schema.db -schema main
 ./db2toon duckdb -db ./analytics.duckdb -schema analytics
+./db2toon oracle -db 'oracle://app:password@localhost:1521/FREEPDB1' -schema APP
 ```
 
 ### Flags
 
 - `-db string`: Database connection URL or local database path; mutually exclusive with `-dump`
 - `-dump string`: Plain-text SQL dump path; mutually exclusive with `-db`
-- `dialect`: `postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, or `sqlserver` for `db2toon`; `pg2toon` always uses PostgreSQL
+- `dialect`: `postgres`, `sqlite`, `duckdb`, `mysql`, `mariadb`, `cockroachdb`, `mssql`, `sqlserver`, or `oracle` for `db2toon`; `pg2toon` always uses PostgreSQL
 - `-out string`: Output file path (optional, defaults to stdout)
-- `-schema string`: A single schema to extract (defaults to `public` for PostgreSQL, `main` for SQLite/DuckDB, and `dbo` for SQL Server)
+- `-schema string`: A single schema to extract (defaults to `public` for PostgreSQL, `main` for SQLite/DuckDB, `dbo` for SQL Server, and the session `CURRENT_SCHEMA` for Oracle)
 - `-schemas string`: Comma-separated schemas to extract; cannot be combined with `-schema`
 - `-include-partitioned`: Include PostgreSQL partitioned tables
 - `-include-views`: Include supported views
@@ -164,12 +170,16 @@ Select multiple schemas, include partitioned tables, and change the default
 - `-seed int`: Seed for reproducible PostgreSQL sample selection (defaults to `0`; currently ignored by SQLite/DuckDB)
 - `-timeout duration`: Connection and extraction timeout (defaults to `30s`)
 
-Dump mode currently supports plain-text SQL exports for PostgreSQL, SQLite,
-DuckDB, MySQL/MariaDB, and CockroachDB. SQL Server currently supports live
-connections only. Common tables, columns, constraints,
+Dump mode supports plain-text SQL exports for PostgreSQL, SQLite, DuckDB,
+MySQL/MariaDB, CockroachDB, SQL Server, and Oracle. Common tables, columns, constraints,
 indexes, comments, and bounded `INSERT` examples are parsed without executing
-the dump. Triggers and other metadata without a canonical TOON representation
-are ignored.
+the dump. PostgreSQL retains native enums, sequences, views, functions,
+procedures, and triggers, including dollar-quoted routine bodies. MySQL/MariaDB
+supports `DELIMITER`-based routine and trigger declarations. SQL Server and
+Oracle retain supported views, functions, procedures, triggers, sequences,
+types, synonyms, and selected vendor objects. Complex vendor-specific PL/SQL/
+T-SQL bodies are preserved as available statement text; unsupported declarations
+are ignored rather than executed.
 
 ## Output Format
 
@@ -220,15 +230,55 @@ The Toon format provides a clean, human-readable schema definition:
   - Multiple tags: `{pk,req}`
 - `-> table(column)`: Foreign key reference (inline for single columns)
 - `@indices`: Section for database indexes
+- `@enum`: Enumerated type values
+- `@type`: User-defined type metadata
+- `@sequence`: Sequence configuration
+- `@synonym`: Alternate object name
+- `@routine`: Function or procedure metadata and definition where available
+- `@triggers`: Table trigger metadata
+- `@objects`: Vendor-specific schema objects, including Oracle materialized
+  views, packages, partitioned tables, scheduler jobs, and database links
 - `@example[n]{columns}:`: Up to `n` sampled rows from the table
 - `// comment`: Inline column comment
+
+### Oracle coverage
+
+Oracle extraction uses user-visible `ALL_*` catalog views, so the output is
+limited to objects the connected account can inspect. It supports tables,
+views, columns and comments, primary/unique/foreign-key/check constraints,
+independent indexes, triggers, standalone functions and procedures, user
+sequences, object types, synonyms, materialized views, packages/package bodies,
+partitioned-table markers, scheduler jobs, and database links. Oracle-generated
+identity sequences and system-generated `NOT NULL` checks are omitted because
+their information is already represented by the column model.
+
+Package/type source bodies, materialized-view refresh settings, detailed
+partition definitions, grants/roles, VPD policies, tablespace/storage details,
+specialized spatial/domain index options, and Oracle SQL dump parsing are not
+yet represented in the canonical model.
+
+### Microsoft SQL Server coverage
+
+Microsoft SQL Server extraction uses `sys.*` catalog views and defaults to the
+`dbo` schema unless `-schema` or `-schemas` is supplied. It supports tables and
+views, columns and `MS_Description` comments, defaults, identity/computed
+columns, primary/unique/foreign-key/check constraints, independent indexes,
+triggers, functions/procedures, alias/table types, sequences, synonyms, and
+sample rows. View definitions and vendor-specific schema objects are emitted in
+the TOON object sections where applicable.
+
+SQL Server dump parsing is not supported. The current model also does not yet
+represent partition functions/schemes, filegroups, temporal or memory-optimized
+table settings, graph tables, full-text/spatial/XML index internals, permissions,
+extended properties other than descriptions, Agent jobs, or server-level objects.
 
 ## Requirements
 
 - Go 1.26.0 or later
-- PostgreSQL 9.4+ (for JSON aggregation functions), SQLite, DuckDB, MySQL/MariaDB, CockroachDB, or Microsoft SQL Server 2022+
+- PostgreSQL 9.4+ (for JSON aggregation functions), SQLite, DuckDB, MySQL/MariaDB, CockroachDB, Microsoft SQL Server 2022+, or Oracle Database
 - A valid database connection string or local database path
 - DuckDB also requires a compatible `libduckdb` shared library at runtime
+- Oracle uses the pure-Go `go-ora` driver and does not require Oracle Instant Client or CGO
 
 ## License
 

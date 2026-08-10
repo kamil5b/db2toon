@@ -15,16 +15,18 @@ import (
 )
 
 type dumpState struct {
-	tables map[string]*schema.Table
-	order  []string
-	rows   map[string][][]any
+	tables      map[string]*schema.Table
+	order       []string
+	rows        map[string][][]any
+	schemas     map[string]*schema.Schema
+	schemaOrder []string
 }
 
 var qualifiedRE = regexp.MustCompile(`(?is)^(?:CREATE\s+TABLE\s+)(?:IF\s+NOT\s+EXISTS\s+)?(.+?)\s*\((.*)\)$`)
 var alterRE = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+(?:ONLY\s+)?([^\s]+)\s+ADD\s+(?:CONSTRAINT\s+([^\s]+)\s+)?(.+)$`)
 
 func parseDump(input string) (*dumpState, error) {
-	d := &dumpState{tables: map[string]*schema.Table{}, rows: map[string][][]any{}}
+	d := &dumpState{tables: map[string]*schema.Table{}, rows: map[string][][]any{}, schemas: map[string]*schema.Schema{}}
 	for _, stmt := range splitDumpStatements(input) {
 		s := strings.TrimSpace(stmt.sql)
 		if s == "" {
@@ -48,6 +50,16 @@ func parseDump(input string) (*dumpState, error) {
 			d.insert(s)
 		case strings.HasPrefix(upper, "COPY "):
 			d.copy(s)
+		case strings.HasPrefix(upper, "CREATE TYPE") && strings.Contains(upper, " AS ENUM"):
+			d.enum(s)
+		case strings.HasPrefix(upper, "CREATE SEQUENCE"):
+			d.sequence(s)
+		case strings.HasPrefix(upper, "CREATE VIEW"), strings.HasPrefix(upper, "CREATE OR REPLACE VIEW"):
+			d.view(s)
+		case strings.HasPrefix(upper, "CREATE FUNCTION"), strings.HasPrefix(upper, "CREATE OR REPLACE FUNCTION"), strings.HasPrefix(upper, "CREATE PROCEDURE"), strings.HasPrefix(upper, "CREATE OR REPLACE PROCEDURE"):
+			d.routine(s)
+		case strings.HasPrefix(upper, "CREATE TRIGGER"):
+			d.trigger(s)
 		}
 	}
 	return d, nil
@@ -135,6 +147,7 @@ func (d *dumpState) createTable(s string, line int) error {
 	}
 	key := schemaName + "." + name
 	t := &schema.Table{Schema: schemaName, Name: name}
+	d.namespace(schemaName)
 	d.tables[key] = t
 	d.order = append(d.order, key)
 	for _, part := range splitTopLevel(m[2], ',') {
@@ -337,6 +350,12 @@ func (d *dumpState) apply(ctx context.Context, opts database.ExtractOptions) (*s
 	for _, s := range opts.Schemas {
 		allowed[s] = true
 	}
+	for _, name := range d.schemaOrder {
+		if len(allowed) == 0 || allowed[name] {
+			copied := *d.schemas[name]
+			out.Schemas = append(out.Schemas, copied)
+		}
+	}
 	for _, key := range d.order {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -376,16 +395,107 @@ func (d *dumpState) apply(ctx context.Context, opts database.ExtractOptions) (*s
 				t.Example = ex
 			}
 		}
-		var sch *schema.Schema
-		if len(out.Schemas) == 0 || out.Schemas[len(out.Schemas)-1].Name != t.Schema {
-			out.Schemas = append(out.Schemas, schema.Schema{Name: t.Schema})
-			sch = &out.Schemas[len(out.Schemas)-1]
-		} else {
-			sch = &out.Schemas[len(out.Schemas)-1]
+		for i := range out.Schemas {
+			if out.Schemas[i].Name == t.Schema {
+				out.Schemas[i].Tables = append(out.Schemas[i].Tables, t)
+				break
+			}
 		}
-		sch.Tables = append(sch.Tables, t)
 	}
 	return out, nil
+}
+
+func (d *dumpState) namespace(name string) *schema.Schema {
+	if d.schemas[name] == nil {
+		d.schemas[name] = &schema.Schema{Name: name}
+		d.schemaOrder = append(d.schemaOrder, name)
+	}
+	return d.schemas[name]
+}
+
+func (d *dumpState) enum(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+TYPE\s+([^\s]+)\s+AS\s+ENUM\s*\((.*)\)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	sch, name := splitIdentifier(m[1])
+	if sch == "" {
+		sch = "public"
+	}
+	values := []string{}
+	for _, v := range splitTopLevel(m[2], ',') {
+		values = append(values, sqlString(v))
+	}
+	d.namespace(sch).Enums = append(d.namespace(sch).Enums, schema.Enum{Name: name, Values: values})
+}
+func (d *dumpState) sequence(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+SEQUENCE\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := splitIdentifier(m[1])
+	if sch == "" {
+		sch = "public"
+	}
+	q := schema.Sequence{Name: name, NativeType: "bigint"}
+	if x := regexp.MustCompile(`(?is)\bINCREMENT\s+(?:BY\s+)?([^\s;]+)`).FindStringSubmatch(s); len(x) > 1 {
+		q.Increment = x[1]
+	}
+	if x := regexp.MustCompile(`(?is)\bSTART\s+(?:WITH\s+)?([^\s;]+)`).FindStringSubmatch(s); len(x) > 1 {
+		q.Start = x[1]
+	}
+	d.namespace(sch).Sequences = append(d.namespace(sch).Sequences, q)
+}
+func (d *dumpState) view(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(m) < 2 {
+		return
+	}
+	sch, name := splitIdentifier(m[1])
+	if sch == "" {
+		sch = "public"
+	}
+	d.namespace(sch)
+	key := sch + "." + name
+	d.tables[key] = &schema.Table{Schema: sch, Name: name, Kind: "view", Definition: s}
+	d.order = append(d.order, key)
+}
+func (d *dumpState) routine(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+(?:OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)\s+([^\s(]+)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	sch, name := splitIdentifier(m[2])
+	if sch == "" {
+		sch = "public"
+	}
+	d.namespace(sch).Routines = append(d.namespace(sch).Routines, schema.Routine{Name: name, Kind: strings.ToLower(m[1]), Definition: s})
+}
+func (d *dumpState) trigger(s string) {
+	m := regexp.MustCompile(`(?is)^CREATE\s+TRIGGER\s+([^\s]+).*?\bON\s+([^\s]+)`).FindStringSubmatch(s)
+	if len(m) < 3 {
+		return
+	}
+	key := normalizeQualified(m[2])
+	t := d.tables[key]
+	if t == nil {
+		return
+	}
+	tr := schema.Trigger{Name: unquote(m[1]), Enabled: true, Definition: s}
+	u := strings.ToUpper(s)
+	if strings.Contains(u, "BEFORE") {
+		tr.Timing = "BEFORE"
+	} else if strings.Contains(u, "INSTEAD OF") {
+		tr.Timing = "INSTEAD OF"
+	} else {
+		tr.Timing = "AFTER"
+	}
+	for _, event := range []string{"INSERT", "UPDATE", "DELETE", "TRUNCATE"} {
+		if strings.Contains(u, event) {
+			tr.Events = append(tr.Events, event)
+		}
+	}
+	t.Triggers = append(t.Triggers, tr)
 }
 
 func splitTopLevel(s string, sep byte) []string {
