@@ -71,6 +71,28 @@ Ref: child.(a,b) > parent.(a,b) [update: no action, delete: set null]
 	}
 }
 
+func TestParseDB2DBMLOptionalReference(t *testing.T) {
+	input := `Table "labels" {
+  "id" bigint [pk]
+}
+Table "task_labels" {
+  "label_id" bigint
+}
+Ref:"labels"."id" ?<? "task_labels"."label_id"
+`
+	db, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk := db.Schemas[0].Tables[1].ForeignKeys[0]
+	if got := strings.Join(fk.LocalColumns, ","); got != "label_id" {
+		t.Fatalf("local columns = %q, want label_id", got)
+	}
+	if fk.ReferencedTable != "labels" || strings.Join(fk.ReferencedColumns, ",") != "id" {
+		t.Fatalf("reference = %s(%s), want labels(id)", fk.ReferencedTable, strings.Join(fk.ReferencedColumns, ","))
+	}
+}
+
 func TestParseUnknownReferenceTable(t *testing.T) {
 	_, err := Parse(strings.NewReader("Ref: missing.id > users.id\n"))
 	if err == nil || !strings.Contains(err.Error(), `reference table "missing" not found`) {

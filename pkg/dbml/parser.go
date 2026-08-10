@@ -12,6 +12,7 @@ import (
 )
 
 var tableHeader = regexp.MustCompile(`(?i)^table\s+([^\s\[]+)`)
+var referenceOperator = regexp.MustCompile(`\s+\??\s*(<>|>|<|-)\s*\??\s+`)
 
 // Parse reads a DBML document. It supports tables, column settings, indexes,
 // notes, and inline or top-level references.
@@ -167,22 +168,16 @@ func (p *parser) addReference(line string) error {
 		return fmt.Errorf("dbml: invalid reference %q", line)
 	}
 	expr, settings := splitSettings(strings.TrimSpace(line[colon+1:]))
-	var op string
-	for _, candidate := range []string{"<>", ">", "<", "-"} {
-		if strings.Contains(expr, candidate) {
-			op = candidate
-			break
-		}
-	}
-	if op == "" {
+	operator := referenceOperator.FindStringSubmatchIndex(expr)
+	if operator == nil {
 		return fmt.Errorf("dbml: invalid reference %q", line)
 	}
-	parts := strings.SplitN(expr, op, 2)
-	left, err := endpoint(parts[0])
+	op := expr[operator[2]:operator[3]]
+	left, err := endpoint(expr[:operator[0]])
 	if err != nil {
 		return err
 	}
-	right, err := endpoint(parts[1])
+	right, err := endpoint(expr[operator[1]:])
 	if err != nil {
 		return err
 	}
