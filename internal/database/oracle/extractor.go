@@ -169,7 +169,7 @@ func (e *Extractor) loadConstraints(ctx context.Context, t *schema.Table) error 
 }
 
 func (e *Extractor) loadIndexes(ctx context.Context, t *schema.Table) error {
-	rows, err := e.db.QueryContext(ctx, `SELECT i.index_name,i.uniqueness,i.index_type,ic.column_name FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner=i.owner AND ic.index_name=i.index_name WHERE i.table_owner=:1 AND i.table_name=:2 ORDER BY i.index_name,ic.column_position`, t.Schema, t.Name)
+	rows, err := e.db.QueryContext(ctx, `SELECT i.index_name,i.uniqueness,i.index_type,ic.column_name FROM all_indexes i JOIN all_ind_columns ic ON ic.index_owner=i.owner AND ic.index_name=i.index_name WHERE i.table_owner=:1 AND i.table_name=:2 AND NOT EXISTS (SELECT 1 FROM all_constraints ac WHERE ac.owner=i.owner AND ac.index_name=i.index_name) ORDER BY i.index_name,ic.column_position`, t.Schema, t.Name)
 	if err != nil {
 		return err
 	}
