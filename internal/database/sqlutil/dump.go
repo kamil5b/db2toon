@@ -70,6 +70,8 @@ func (d *genericDump) parse(input string) error {
 		}
 		u := strings.ToUpper(s)
 		switch {
+		case strings.HasPrefix(u, "CREATE DATABASE LINK"):
+			d.object(s, "database_link", `(?is)^CREATE\s+DATABASE\s+LINK\s+([^\s]+)`)
 		case strings.HasPrefix(u, "USE "):
 			d.currentSchema = genericUnquote(strings.TrimSpace(strings.TrimSuffix(s[4:], ";")))
 		case strings.HasPrefix(u, "CREATE DATABASE"), strings.HasPrefix(u, "CREATE SCHEMA"):
@@ -104,8 +106,6 @@ func (d *genericDump) parse(input string) error {
 			d.object(s, "package_body", `(?is)^CREATE\s+PACKAGE\s+BODY\s+([^\s]+)`)
 		case strings.HasPrefix(u, "CREATE PACKAGE"):
 			d.object(s, "package", `(?is)^CREATE\s+PACKAGE\s+([^\s]+)`)
-		case strings.HasPrefix(u, "CREATE DATABASE LINK"):
-			d.object(s, "database_link", `(?is)^CREATE\s+DATABASE\s+LINK\s+([^\s]+)`)
 		}
 	}
 	return nil
