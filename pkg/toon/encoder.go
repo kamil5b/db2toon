@@ -26,6 +26,9 @@ func Encode(w io.Writer, db *schema.Database) error {
 		return fmt.Errorf("toon: nil database")
 	}
 	e := encoder{w: w, multipleSchemas: len(db.Schemas) > 1}
+	if err := e.database(db); err != nil {
+		return err
+	}
 	if err := e.extensions(db.Extensions); err != nil {
 		return err
 	}
@@ -40,6 +43,26 @@ func Encode(w io.Writer, db *schema.Database) error {
 		}
 	}
 	return nil
+}
+
+func (e encoder) database(db *schema.Database) error {
+	if db.Dialect == "" && db.Name == "" {
+		return nil
+	}
+	if err := e.printf("@database"); err != nil {
+		return err
+	}
+	if db.Name != "" {
+		if err := e.printf(" %s", identifier(db.Name)); err != nil {
+			return err
+		}
+	}
+	if db.Dialect != "" {
+		if err := e.printf(" {dialect=%s}", identifier(strings.ToLower(db.Dialect))); err != nil {
+			return err
+		}
+	}
+	return e.printf("\n\n")
 }
 
 func (e encoder) extensions(extensions []schema.Extension) error {

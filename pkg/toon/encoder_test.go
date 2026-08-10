@@ -116,6 +116,17 @@ func TestEncodeEnumsRoutinesAndTriggers(t *testing.T) {
 	}
 }
 
+func TestEncodeDatabaseMetadata(t *testing.T) {
+	db := &schema.Database{Dialect: "oracle", Name: "FREEPDB1", Schemas: []schema.Schema{{Name: "APP"}}}
+	var got bytes.Buffer
+	if err := Encode(&got, db); err != nil {
+		t.Fatal(err)
+	}
+	if want := "@database FREEPDB1 {dialect=oracle}\n\n"; got.String() != want {
+		t.Fatalf("output = %q, want %q", got.String(), want)
+	}
+}
+
 func TestEncodeSchemaObjects(t *testing.T) {
 	db := &schema.Database{Schemas: []schema.Schema{{Name: "app", Types: []schema.UserDefinedType{{Name: "account_code", Kind: "alias", NativeType: "nvarchar"}}, Sequences: []schema.Sequence{{Name: "invoice_number", NativeType: "bigint", Start: "100", Increment: "5"}}, Synonyms: []schema.Synonym{{Name: "people", Target: "[app].[users]"}}}}}
 	var got bytes.Buffer

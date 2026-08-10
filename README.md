@@ -186,6 +186,8 @@ are ignored rather than executed.
 The Toon format provides a clean, human-readable schema definition:
 
 ```
+@database app {dialect=postgres}
+
 [users]
 # User accounts table
 
@@ -222,6 +224,7 @@ The Toon format provides a clean, human-readable schema definition:
 
 ### Format Elements
 
+- `@database name {dialect=dialect}`: Source database metadata. Live connections derive the name from the connection string; dump mode uses the dump filename without its extension.
 - `[TableName]`: Table definition
 - `# comment`: Table or column comments
 - `name type {tags}`: Column definition with optional tags
