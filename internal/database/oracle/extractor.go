@@ -56,6 +56,9 @@ func (e *Extractor) extractSchema(ctx context.Context, owner string, opts databa
 	if err := e.loadRoutines(ctx, &s); err != nil {
 		return s, err
 	}
+	if err := e.loadExtendedObjects(ctx, &s); err != nil {
+		return s, err
+	}
 	rows, err := e.db.QueryContext(ctx, `SELECT o.object_name,o.object_type,c.comments FROM all_objects o LEFT JOIN all_tab_comments c ON c.owner=o.owner AND c.table_name=o.object_name WHERE o.owner=:1 AND o.object_type IN ('TABLE','VIEW') AND (:2=1 OR o.object_type='TABLE') ORDER BY o.object_name`, owner, boolToInt(opts.IncludeViews))
 	if err != nil {
 		return s, err
@@ -248,6 +251,101 @@ func (e *Extractor) loadSequences(ctx context.Context, s *schema.Schema) error {
 		}
 		q.Cyclic = cycle == "Y"
 		s.Sequences = append(s.Sequences, q)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) loadExtendedObjects(ctx context.Context, s *schema.Schema) error {
+	if err := e.loadOracleTypes(ctx, s); err != nil {
+		return err
+	}
+	if err := e.loadOracleSynonyms(ctx, s); err != nil {
+		return err
+	}
+	queries := []struct{ kind, query string }{
+		{"materialized_view", `SELECT mview_name FROM all_mviews WHERE owner=:1 ORDER BY mview_name`},
+		{"package", `SELECT object_name FROM all_objects WHERE owner=:1 AND object_type='PACKAGE' ORDER BY object_name`},
+		{"package_body", `SELECT object_name FROM all_objects WHERE owner=:1 AND object_type='PACKAGE BODY' ORDER BY object_name`},
+		{"object_type", `SELECT object_name FROM all_objects WHERE owner=:1 AND object_type='TYPE' ORDER BY object_name`},
+		{"object_type_body", `SELECT object_name FROM all_objects WHERE owner=:1 AND object_type='TYPE BODY' ORDER BY object_name`},
+		{"partitioned_table", `SELECT table_name FROM all_part_tables WHERE owner=:1 ORDER BY table_name`},
+		{"scheduler_job", `SELECT job_name FROM all_scheduler_jobs WHERE owner=:1 ORDER BY job_name`},
+	}
+	for _, entry := range queries {
+		rows, err := e.db.QueryContext(ctx, entry.query, s.Name)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return err
+			}
+			s.Objects = append(s.Objects, schema.Object{Name: name, Kind: entry.kind})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	return e.loadOracleDatabaseLinks(ctx, s)
+}
+
+func (e *Extractor) loadOracleTypes(ctx context.Context, s *schema.Schema) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT type_name,typecode FROM all_types WHERE owner=:1 ORDER BY type_name`, s.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var typ schema.UserDefinedType
+		if err := rows.Scan(&typ.Name, &typ.Kind); err != nil {
+			return err
+		}
+		typ.Kind = strings.ToLower(typ.Kind)
+		s.Types = append(s.Types, typ)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) loadOracleSynonyms(ctx context.Context, s *schema.Schema) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT synonym_name,table_owner,table_name,db_link FROM all_synonyms WHERE owner=:1 ORDER BY synonym_name`, s.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var synonym schema.Synonym
+		var owner, name, link sql.NullString
+		if err := rows.Scan(&synonym.Name, &owner, &name, &link); err != nil {
+			return err
+		}
+		synonym.Target = owner.String + "." + name.String
+		if link.Valid {
+			synonym.Target += "@" + link.String
+		}
+		s.Synonyms = append(s.Synonyms, synonym)
+	}
+	return rows.Err()
+}
+
+func (e *Extractor) loadOracleDatabaseLinks(ctx context.Context, s *schema.Schema) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT db_link,username,host FROM all_db_links WHERE owner=:1 ORDER BY db_link`, s.Name)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var object schema.Object
+		var user, host sql.NullString
+		if err := rows.Scan(&object.Name, &user, &host); err != nil {
+			return err
+		}
+		object.Kind = "database_link"
+		object.Properties = []schema.Property{{Name: "user", Value: user.String}, {Name: "host", Value: host.String}}
+		s.Objects = append(s.Objects, object)
 	}
 	return rows.Err()
 }

@@ -18,6 +18,7 @@ type Schema struct {
 	Types     []UserDefinedType
 	Sequences []Sequence
 	Synonyms  []Synonym
+	Objects   []Object
 	Routines  []Routine
 	Tables    []Table
 }
@@ -50,6 +51,21 @@ type Sequence struct {
 type Synonym struct {
 	Name   string
 	Target string
+}
+
+// Object is a vendor-neutral schema object that does not map to a table,
+// routine, type, sequence, or synonym.
+type Object struct {
+	Name       string
+	Kind       string
+	Definition string
+	Properties []Property
+}
+
+// Property preserves ordered vendor-specific metadata for an Object.
+type Property struct {
+	Name  string
+	Value string
 }
 
 // Routine describes a stored function or procedure.

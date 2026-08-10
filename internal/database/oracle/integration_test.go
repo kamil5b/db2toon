@@ -43,7 +43,7 @@ func TestOracleSchemaExtraction(t *testing.T) {
 	if _, err := system.db.ExecContext(ctx, `CREATE USER app IDENTIFIED BY AppPassw0rd`); err != nil {
 		t.Fatalf("create app user: %v", err)
 	}
-	if _, err := system.db.ExecContext(ctx, `GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE TO app`); err != nil {
+	if _, err := system.db.ExecContext(ctx, `GRANT CONNECT, RESOURCE, UNLIMITED TABLESPACE, CREATE MATERIALIZED VIEW, CREATE DATABASE LINK, CREATE JOB TO app`); err != nil {
 		t.Fatalf("grant app user: %v", err)
 	}
 	appDSN := fmt.Sprintf("oracle://app:AppPassw0rd@%s:%s/FREEPDB1", host, port.Port())
@@ -57,9 +57,17 @@ func TestOracleSchemaExtraction(t *testing.T) {
 		`CREATE TABLE posts (id NUMBER PRIMARY KEY, author_id NUMBER NOT NULL REFERENCES users(id) ON DELETE CASCADE, title VARCHAR2(200) NOT NULL)`,
 		`CREATE INDEX posts_title_idx ON posts(title)`,
 		`CREATE SEQUENCE invoice_number START WITH 100 INCREMENT BY 5`,
+		`CREATE TYPE address_type AS OBJECT (street VARCHAR2(100))`,
+		`CREATE SYNONYM people FOR users`,
 		`CREATE VIEW user_names AS SELECT id, name FROM users`,
+		`CREATE MATERIALIZED VIEW user_count_mv AS SELECT COUNT(*) AS total FROM users`,
+		`CREATE TABLE audit_events (id NUMBER, created_at DATE) PARTITION BY RANGE (created_at) (PARTITION p2025 VALUES LESS THAN (DATE '2026-01-01'), PARTITION pmax VALUES LESS THAN (MAXVALUE))`,
 		`CREATE FUNCTION user_count RETURN NUMBER AS BEGIN RETURN 1; END;`,
+		`CREATE PACKAGE user_api AS FUNCTION count_users RETURN NUMBER; END;`,
+		`CREATE PACKAGE BODY user_api AS FUNCTION count_users RETURN NUMBER IS BEGIN RETURN 1; END; END;`,
 		`CREATE TRIGGER users_audit BEFORE INSERT ON users FOR EACH ROW BEGIN NULL; END;`,
+		`CREATE DATABASE LINK remote_db CONNECT TO app IDENTIFIED BY AppPassw0rd USING 'FREEPDB1'`,
+		`BEGIN DBMS_SCHEDULER.CREATE_JOB(job_name => 'app_job', job_type => 'PLSQL_BLOCK', job_action => 'BEGIN NULL; END;', enabled => FALSE); END;`,
 		`INSERT INTO users (email, name) VALUES ('alice@example.com', 'Alice')`,
 		`INSERT INTO users (email, name) VALUES ('bob@example.com', 'Bob')`,
 	} {
@@ -95,6 +103,17 @@ func TestOracleSchemaExtraction(t *testing.T) {
 	if view.Kind != "view" {
 		t.Fatalf("view: %#v", view)
 	}
+	if len(db.Schemas[0].Types) != 1 || db.Schemas[0].Types[0].Name != "ADDRESS_TYPE" {
+		t.Fatalf("types: %#v", db.Schemas[0].Types)
+	}
+	if len(db.Schemas[0].Synonyms) != 1 || db.Schemas[0].Synonyms[0].Name != "PEOPLE" {
+		t.Fatalf("synonyms: %#v", db.Schemas[0].Synonyms)
+	}
+	for _, want := range []struct{ kind, name string }{{"materialized_view", "USER_COUNT_MV"}, {"package", "USER_API"}, {"package_body", "USER_API"}, {"partitioned_table", "AUDIT_EVENTS"}, {"database_link", "REMOTE_DB"}, {"scheduler_job", "APP_JOB"}} {
+		if !hasObject(db.Schemas[0].Objects, want.kind, want.name) {
+			t.Fatalf("missing Oracle object %s %s: %#v", want.kind, want.name, db.Schemas[0].Objects)
+		}
+	}
 }
 
 func findTable(tables []schema.Table, name string) schema.Table {
@@ -104,4 +123,13 @@ func findTable(tables []schema.Table, name string) schema.Table {
 		}
 	}
 	return schema.Table{}
+}
+
+func hasObject(objects []schema.Object, kind, name string) bool {
+	for _, object := range objects {
+		if object.Kind == kind && object.Name == name {
+			return true
+		}
+	}
+	return false
 }

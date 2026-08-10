@@ -133,6 +133,36 @@ func (e encoder) schemaObjects(namespace schema.Schema) error {
 			return err
 		}
 	}
+	if len(namespace.Objects) > 0 {
+		if err := e.printf("@objects\n"); err != nil {
+			return err
+		}
+		for _, object := range namespace.Objects {
+			if err := e.printf("  %s %s", strings.ToLower(object.Kind), e.schemaObjectName(namespace.Name, object.Name)); err != nil {
+				return err
+			}
+			if len(object.Properties) > 0 {
+				properties := make([]string, 0, len(object.Properties))
+				for _, property := range object.Properties {
+					properties = append(properties, identifier(property.Name)+"="+singleLine(property.Value))
+				}
+				if err := e.printf(" {%s}", strings.Join(properties, ",")); err != nil {
+					return err
+				}
+			}
+			if err := e.printf("\n"); err != nil {
+				return err
+			}
+			for _, line := range commentLines(object.Definition) {
+				if err := e.printf("    %s\n", line); err != nil {
+					return err
+				}
+			}
+		}
+		if err := e.printf("\n"); err != nil {
+			return err
+		}
+	}
 	for _, routine := range namespace.Routines {
 		kind := strings.ToLower(routine.Kind)
 		if kind == "" {
