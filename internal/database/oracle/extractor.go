@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/database"
 	"github.com/kamil5b/db2toon/internal/database/sqlutil"
 	"github.com/kamil5b/db2toon/pkg/schema"
@@ -16,7 +17,7 @@ import (
 type Extractor struct{ db *sql.DB }
 
 func New(ctx context.Context, dsn string) (*Extractor, error) {
-	db, err := sql.Open("oracle", dsn)
+	db, err := sql.Open(constants.DialectOracle, dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +30,7 @@ func New(ctx context.Context, dsn string) (*Extractor, error) {
 
 // NewFromDump parses a plain-text Oracle schema dump without executing it.
 func NewFromDump(ctx context.Context, path string) (database.Extractor, error) {
-	return sqlutil.NewDumpExtractor(ctx, path, "oracle", "")
+	return sqlutil.NewDumpExtractor(ctx, path, constants.DialectOracle, "")
 }
 
 func (e *Extractor) Close(context.Context) error { return e.db.Close() }

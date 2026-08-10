@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
 
@@ -220,7 +221,7 @@ func (e encoder) schemaObjects(namespace schema.Schema) error {
 }
 
 func (e encoder) schemaObjectName(namespace, name string) string {
-	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+	if e.multipleSchemas || (namespace != "" && namespace != constants.SchemaPublic) {
 		return identifier(namespace) + "." + identifier(name)
 	}
 	return identifier(name)
@@ -238,7 +239,7 @@ func (e encoder) printf(format string, args ...any) error {
 
 func (e encoder) table(namespace string, table schema.Table) error {
 	name := identifier(table.Name)
-	if e.multipleSchemas || (namespace != "" && namespace != "public") {
+	if e.multipleSchemas || (namespace != "" && namespace != constants.SchemaPublic) {
 		name = identifier(namespace) + "." + name
 	}
 	if err := e.printf("[%s]", name); err != nil {

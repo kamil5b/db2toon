@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/database"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
@@ -143,7 +144,7 @@ func (d *dumpState) createTable(s string, line int) error {
 	}
 	schemaName, name := splitIdentifier(m[1])
 	if schemaName == "" {
-		schemaName = "public"
+		schemaName = constants.SchemaPublic
 	}
 	key := schemaName + "." + name
 	t := &schema.Table{Schema: schemaName, Name: name}
@@ -420,7 +421,7 @@ func (d *dumpState) enum(s string) {
 	}
 	sch, name := splitIdentifier(m[1])
 	if sch == "" {
-		sch = "public"
+		sch = constants.SchemaPublic
 	}
 	values := []string{}
 	for _, v := range splitTopLevel(m[2], ',') {
@@ -435,7 +436,7 @@ func (d *dumpState) sequence(s string) {
 	}
 	sch, name := splitIdentifier(m[1])
 	if sch == "" {
-		sch = "public"
+		sch = constants.SchemaPublic
 	}
 	q := schema.Sequence{Name: name, NativeType: "bigint"}
 	if x := regexp.MustCompile(`(?is)\bINCREMENT\s+(?:BY\s+)?([^\s;]+)`).FindStringSubmatch(s); len(x) > 1 {
@@ -453,7 +454,7 @@ func (d *dumpState) view(s string) {
 	}
 	sch, name := splitIdentifier(m[1])
 	if sch == "" {
-		sch = "public"
+		sch = constants.SchemaPublic
 	}
 	d.namespace(sch)
 	key := sch + "." + name
@@ -467,7 +468,7 @@ func (d *dumpState) routine(s string) {
 	}
 	sch, name := splitIdentifier(m[2])
 	if sch == "" {
-		sch = "public"
+		sch = constants.SchemaPublic
 	}
 	d.namespace(sch).Routines = append(d.namespace(sch).Routines, schema.Routine{Name: name, Kind: strings.ToLower(m[1]), Definition: s})
 }
@@ -586,7 +587,7 @@ func splitIdentifier(s string) (string, string) {
 func normalizeQualified(s string) string {
 	a, b := splitIdentifier(s)
 	if a == "" {
-		a = "public"
+		a = constants.SchemaPublic
 	}
 	return a + "." + b
 }

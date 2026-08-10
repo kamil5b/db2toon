@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/kamil5b/db2toon/constants"
 	"github.com/kamil5b/db2toon/internal/database"
 	"github.com/kamil5b/db2toon/pkg/schema"
 )
@@ -45,7 +46,7 @@ func (e *Extractor) Close(ctx context.Context) error {
 func (e *Extractor) Extract(ctx context.Context, opts database.ExtractOptions) (*schema.Database, error) {
 	schemas := opts.Schemas
 	if len(schemas) == 0 {
-		schemas = []string{"public"}
+		schemas = []string{constants.SchemaPublic}
 	}
 
 	relkinds := []string{"r"}
