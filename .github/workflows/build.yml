@@ -120,6 +120,7 @@ jobs:
           mkdir -p package/usr/bin package/DEBIAN
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --pattern "${{ matrix.arch }}-linux-db2toon" --dir package/usr/bin
+          mv "package/usr/bin/${{ matrix.arch }}-linux-db2toon" package/usr/bin/db2toon
           chmod 0755 package/usr/bin/db2toon
       - name: Build Debian package
         env:
