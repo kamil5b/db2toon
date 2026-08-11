@@ -1,171 +1,371 @@
-name: Build
+name: Build and release
 
 on:
-    push:
-        tags:
-            - "v*"
-    workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
 
 permissions:
-    contents: write
-    packages: write
-    id-token: write
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  GO_VERSION_FILE: go.mod
 
 jobs:
-    test:
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Unit tests
+        run: go test ./...
+        env:
+          CGO_ENABLED: 0
+      - name: Integration tests
+        run: go test -tags=integration ./internal/database/postgres ./internal/mcp
+        env:
+          CGO_ENABLED: 0
 
-            - uses: actions/setup-go@v5
-              with:
-                  go-version-file: go.mod
-                  cache: true
+  build:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+      - name: Cross-build command binaries
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for command in db2toon pg2toon db2toon-mcp dbml2toon; do
+            binary_name="$command"
+            if [[ "$GOOS" == windows ]]; then binary_name+=".exe"; fi
+            go build -trimpath -ldflags='-s -w' -o "dist/$binary_name" "./cmd/$command"
+            asset_name="${GOARCH}-${GOOS}-${binary_name}"
+            mv "dist/$binary_name" "dist/$asset_name"
+            (cd dist && sha256sum "$asset_name") > "dist/$asset_name.sha256"
+          done
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
 
-            - name: Unit tests
-              env:
-                  CGO_ENABLED: 0
-              run: go test ./...
+  release:
+    name: Create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binaries-*
+          path: release
+          merge-multiple: true
+      - name: Create combined checksums
+        working-directory: release
+        run: cat *.sha256 | sort -k2 > checksums.txt
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-            - name: Integration tests
-              env:
-                  CGO_ENABLED: 0
-              run: go test -tags=integration ./internal/database/postgres ./internal/mcp
+  # Debian packages are made from the Linux release assets; the Go program is
+  # never compiled again here. Set APT_REPOSITORY and APT_REPO_TOKEN to publish
+  # the resulting .debs to a separate apt repository.
+  deb:
+    name: Build ${{ matrix.arch }} Debian package
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { arch: amd64, deb_arch: amd64 }
+          - { arch: arm64, deb_arch: arm64 }
+    steps:
+      - name: Download release binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p package/usr/bin package/DEBIAN
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "${{ matrix.arch }}-linux-db2toon" --dir package/usr/bin
+          chmod 0755 package/usr/bin/db2toon
+      - name: Build Debian package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          cat > package/DEBIAN/control <<EOF
+          Package: db2toon
+          Version: ${VERSION}
+          Section: database
+          Priority: optional
+          Architecture: ${{ matrix.deb_arch }}
+          Maintainer: kamil5b
+          Description: Convert database schemas to TOON
+          EOF
+          dpkg-deb --build package "db2toon_${VERSION}_${{ matrix.deb_arch }}.deb"
+      - name: Add package to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "db2toon_*.deb" --repo "$GITHUB_REPOSITORY" --clobber
 
-    build:
-        needs: test
-        runs-on: ubuntu-latest
-        strategy:
-            matrix:
-                include:
-                    - goos: linux
-                      goarch: amd64
-                    - goos: linux
-                      goarch: arm64
-                    - goos: windows
-                      goarch: amd64
-                    - goos: windows
-                      goarch: arm64
-                    - goos: darwin
-                      goarch: amd64
-                    - goos: darwin
-                      goarch: arm64
+  # These jobs are opt-in because they push to repositories/stores outside this
+  # repository. They all consume GitHub Release assets, so enabling them never
+  # creates a second build of the application.
+  homebrew:
+    name: Update Homebrew tap
+    if: startsWith(github.ref, 'refs/tags/v') && vars.HOMEBREW_TAP_ENABLED == 'true'
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - name: Update formula from release assets
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/kamil5b/homebrew-tap.git" tap
+          cd tap
+          mkdir -p Formula
+          ARM_SHA="$(curl -fsSL "https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/checksums.txt" | awk '$2 == "arm64-darwin-db2toon" { print $1 }')"
+          INTEL_SHA="$(curl -fsSL "https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/checksums.txt" | awk '$2 == "amd64-darwin-db2toon" { print $1 }')"
+          cat > Formula/db2toon.rb <<EOF
+          class Db2toon < Formula
+            desc "Convert database schemas to TOON"
+            homepage "https://github.com/kamil5b/db2toon"
+            version "${VERSION}"
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/arm64-darwin-db2toon"
+                sha256 "${ARM_SHA}"
+              else
+                url "https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/amd64-darwin-db2toon"
+                sha256 "${INTEL_SHA}"
+              end
+            end
+            def install
+              bin.install Dir["*"] => "db2toon"
+            end
+          end
+          EOF
+          git add Formula/db2toon.rb
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "db2toon ${VERSION}" || true
+          git push
 
-        steps:
-            - uses: actions/checkout@v4
+  aur:
+    name: Update AUR package
+    if: startsWith(github.ref, 'refs/tags/v') && vars.AUR_ENABLED == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update db2toon-bin PKGBUILD
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION#v}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > ~/.ssh/aur_key
+          chmod 600 ~/.ssh/aur_key
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/aur_key -o IdentitiesOnly=yes"
+          git clone "ssh://aur@aur.archlinux.org/db2toon-bin.git" aur
+          cd aur
+          cat > PKGBUILD <<EOF
+          pkgname=db2toon-bin
+          pkgver=${VERSION}
+          pkgrel=1
+          arch=('x86_64' 'aarch64')
+          url='https://github.com/kamil5b/db2toon'
+          license=('MIT')
+          source_x86_64=("https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/amd64-linux-db2toon")
+          source_aarch64=("https://github.com/kamil5b/db2toon/releases/download/v${VERSION}/arm64-linux-db2toon")
+          sha256sums_x86_64=('SKIP')
+          sha256sums_aarch64=('SKIP')
+          package() { install -Dm755 "\${srcdir}/\$(basename "\${source}")" "\${pkgdir}/usr/bin/db2toon"; }
+          EOF
+          git add PKGBUILD
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Update to ${VERSION}" || true
+          git push
 
-            - uses: actions/setup-go@v5
-              with:
-                  go-version-file: go.mod
-                  cache: true
+  apt:
+    name: Publish APT repository
+    if: startsWith(github.ref, 'refs/tags/v') && vars.APT_ENABLED == 'true'
+    needs: deb
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout APT repository
+        env:
+          APT_REPO_TOKEN: ${{ secrets.APT_REPO_TOKEN }}
+          APT_REPOSITORY: ${{ vars.APT_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          : "${APT_REPOSITORY:?Set the APT_REPOSITORY repository variable}"
+          git clone "https://x-access-token:${APT_REPO_TOKEN}@github.com/${APT_REPOSITORY}.git" apt-repo
+      - name: Download Debian packages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p apt-repo/pool/main
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.deb' --dir apt-repo/pool/main
+      - name: Generate APT indexes
+        working-directory: apt-repo
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev apt-utils
+          for arch in amd64 arm64; do
+            mkdir -p "dists/stable/main/binary-${arch}"
+            dpkg-scanpackages --arch "${arch}" pool/main /dev/null > "dists/stable/main/binary-${arch}/Packages"
+            gzip -9c "dists/stable/main/binary-${arch}/Packages" > "dists/stable/main/binary-${arch}/Packages.gz"
+          done
+          apt-ftparchive release dists/stable > dists/stable/Release
+      - name: Publish APT repository
+        working-directory: apt-repo
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          git add .
+          git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "db2toon ${VERSION}" || true
+          git push
 
-            - name: Build
-              env:
-                  CGO_ENABLED: 0
-                  GOOS: ${{ matrix.goos }}
-                  GOARCH: ${{ matrix.goarch }}
-              run: |
-                  mkdir -p dist
-                  for command in db2toon pg2toon db2toon-mcp dbml2toon; do
-                    binary_name="${command}"
-                    if [ "${{ matrix.goos }}" = "windows" ]; then
-                      binary_name="${binary_name}.exe"
-                    fi
-                    go build -o "dist/${binary_name}" "./cmd/${command}"
-                    final_name="${{ matrix.goarch }}-${{ matrix.goos }}-${binary_name}"
-                    mv "dist/${binary_name}" "dist/${final_name}"
-                    sha256sum "dist/${final_name}" > "dist/${final_name}.sha256"
-                  done
+  snap:
+    name: Build and publish Snap
+    if: startsWith(github.ref, 'refs/tags/v') && vars.SNAP_ENABLED == 'true'
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download central Linux binary
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern 'amd64-linux-db2toon'
+      - name: Prepare snap metadata
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p snap/local
+          mv amd64-linux-db2toon snap/local/db2toon
+          chmod 0755 snap/local/db2toon
+          cat > snap/snapcraft.yaml <<EOF
+          name: db2toon
+          version: '${VERSION}'
+          summary: Convert database schemas to TOON
+          description: Read-only database schema extraction CLI.
+          base: core22
+          grade: stable
+          confinement: classic
+          apps:
+            db2toon:
+              command: db2toon
+          parts:
+            db2toon:
+              plugin: dump
+              source: local
+          EOF
+      - uses: snapcore/action-build@v1
+        id: snap-build
+      - name: Publish Snap
+        if: success()
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: snapcraft upload --release=stable "${{ steps.snap-build.outputs.snap }}"
 
-            - name: Upload to Release
-              if: startsWith(github.ref, 'refs/tags/v')
-              uses: softprops/action-gh-release@v2
-              with:
-                  files: dist/*
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  publish-image:
+    name: Publish MCP container
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push MCP image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.mcp
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.ref_name }}
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            io.modelcontextprotocol.server.name=io.github.kamil5b/db2toon-mcp
 
-    publish-image:
-        name: Publish MCP container
-        needs: test
-        if: startsWith(github.ref, 'refs/tags/v')
-        runs-on: ubuntu-latest
-        outputs:
-            image: ${{ steps.image.outputs.name }}
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Determine image name
-              id: image
-              shell: bash
-              run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-            - name: Set up QEMU
-              uses: docker/setup-qemu-action@v3
-
-            - name: Set up Docker Buildx
-              uses: docker/setup-buildx-action@v3
-
-            - name: Log in to GHCR
-              uses: docker/login-action@v3
-              with:
-                  registry: ghcr.io
-                  username: ${{ github.actor }}
-                  password: ${{ secrets.GITHUB_TOKEN }}
-
-            - name: Build and push MCP image
-              uses: docker/build-push-action@v6
-              with:
-                  context: .
-                  file: Dockerfile.mcp
-                  platforms: linux/amd64,linux/arm64
-                  push: true
-                  tags: |
-                      ${{ steps.image.outputs.name }}:${{ github.ref_name }}
-                      ${{ steps.image.outputs.name }}:latest
-                  labels: |
-                      org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-                      org.opencontainers.image.revision=${{ github.sha }}
-                      org.opencontainers.image.version=${{ github.ref_name }}
-                      io.modelcontextprotocol.server.name=io.github.kamil5b/db2toon-mcp
-
-    publish-registry:
-        name: Publish to MCP Registry
-        needs: publish-image
-        if: startsWith(github.ref, 'refs/tags/v')
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            id-token: write
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Prepare server.json
-              env:
-                  IMAGE: ${{ needs.publish-image.outputs.image }}
-                  TAG: ${{ github.ref_name }}
-              run: |
-                  VERSION="${TAG#v}"
-                  jq \
-                    --arg version "$VERSION" \
-                    --arg identifier "${IMAGE}:${TAG}" \
-                    '.version = $version
-                     | .packages[0].registryType = "oci"
-                     | .packages[0].identifier = $identifier' \
-                    server.json > server.tmp.json
-                  mv server.tmp.json server.json
-                  cat server.json
-
-            - name: Install mcp-publisher
-              shell: bash
-              run: |
-                  curl -L \
-                    "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" \
-                    | tar xz mcp-publisher
-                  chmod +x mcp-publisher
-
-            - name: Authenticate to MCP Registry
-              run: ./mcp-publisher login github-oidc
-
-            - name: Publish to MCP Registry
-              run: ./mcp-publisher publish
+  publish-registry:
+    name: Publish to MCP Registry
+    needs: publish-image
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare server.json
+        env:
+          IMAGE: ${{ needs.publish-image.outputs.image }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          jq --arg version "$VERSION" --arg identifier "${IMAGE}:${TAG}" \
+            '.version = $version | .packages[0].registryType = "oci" | .packages[0].identifier = $identifier' \
+            server.json > server.tmp.json
+          mv server.tmp.json server.json
+      - name: Install mcp-publisher
+        shell: bash
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          chmod +x mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
