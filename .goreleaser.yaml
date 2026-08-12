@@ -1,0 +1,70 @@
+version: 2
+
+project_name: db2toon
+
+builds:
+  - id: db2toon
+    main: ./cmd/db2toon
+    binary: db2toon
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+  - id: pg2toon
+    main: ./cmd/pg2toon
+    binary: pg2toon
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+  - id: db2toon-mcp
+    main: ./cmd/db2toon-mcp
+    binary: db2toon-mcp
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+  - id: dbml2toon
+    main: ./cmd/dbml2toon
+    binary: dbml2toon
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w
+
+# Upload the raw binaries with the stable names used by AUR, Homebrew, and APT.
+archives:
+  - id: db2toon
+    ids: [db2toon]
+    format: binary
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+  - id: pg2toon
+    ids: [pg2toon]
+    format: binary
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+  - id: db2toon-mcp
+    ids: [db2toon-mcp]
+    format: binary
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+  - id: dbml2toon
+    ids: [dbml2toon]
+    format: binary
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  github:
+    owner: kamil5b
+    name: db2toon
+  prerelease: auto
