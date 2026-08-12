@@ -45,19 +45,19 @@ archives:
   - id: db2toon
     ids: [db2toon]
     format: binary
-    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
   - id: pg2toon
     ids: [pg2toon]
     format: binary
-    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
   - id: db2toon-mcp
     ids: [db2toon-mcp]
     format: binary
-    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
   - id: dbml2toon
     ids: [dbml2toon]
     format: binary
-    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ .Ext }}"
+    name_template: "{{ .Arch }}-{{ .Os }}-{{ .Binary }}{{ if eq .Os \"windows\" }}.exe{{ end }}"
 
 checksum:
   name_template: checksums.txt
